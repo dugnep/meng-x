@@ -110,7 +110,7 @@ function ThinkingPanel({ steps, active }) {
  * 百晓通访谈页（登录后主界面）：与百晓通流式聊天，
  * 聊透的功能以「功能卡」气泡出现，可确认 / 让我再改改 / 不要这个。
  * 消息持久化在后端（换设备不丢），localStorage 只存当前场指针；
- * 顶栏「历史」可查看/切换/删除自己的场次。
+ * 左侧场次栏可查看/切换/删除自己的场次（宽屏常驻可抽拉，窄屏抽屉）。
  */
 export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
   const [session, setSession] = useState(null);
@@ -126,6 +126,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
   const [design, setDesign] = useState(null); // 营造图面板模型（SSE design 事件 / 历史恢复），null=不展示
   const [designOpen, setDesignOpen] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false); // 顶栏品牌菜单（看板/每日一签折叠在百晓通下）
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768); // 左侧场次栏：宽屏默认展开可抽拉收起，窄屏为抽屉
   const brandRef = useRef(null);
   const [proposal, setProposal] = useState(null); // 待裁决的应用提案邀请卡（旁路观察器异步产出，轮询补收）
   const pollRef = useRef(null); // notices 轮询定时器（收迟到提案/功能卡）
@@ -149,7 +150,19 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
   }, [messages]);
   const prevDesignTexts = useRef({}); // 上一版格子文本，用于 diff 标「新」
   const listRef = useRef(null);
-  const inputRef = useRef(null);
+  const taRef = useRef(null);
+
+  // 右侧对话线索：每条有效消息取一条摘要（点击定位回原消息）
+  const outlineItems = useMemo(() => {
+    const items = [];
+    messages.forEach((m, i) => {
+      if (m.role === 'user' && m.content) items.push({ idx: i, kind: 'user', text: m.content });
+      else if (m.role === 'assistant' && m.content) items.push({ idx: i, kind: 'assistant', text: m.content });
+      else if (m.role === 'card') items.push({ idx: i, kind: 'card', text: m.card.title || '功能卡' });
+      else if (m.role === 'question') items.push({ idx: i, kind: 'question', text: m.question.stem });
+    });
+    return items;
+  }, [messages]);
 
   // 进页拉未读感谢卡（点子修成后仙君的答谢），逐张弹层展示
   useEffect(() => {
@@ -234,6 +247,12 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     } else {
       startSession().catch(() => {});
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 宽屏侧栏默认展开：进场即拉取场次列表（窄屏抽屉保持首次展开时才拉取）
+  useEffect(() => {
+    if (window.innerWidth > 768) openHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -402,6 +421,34 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     await sendVia(null, input.trim()); // mode=null：由后端意图路由自动分发（法学→法学助手，其余→仙官）
   }
 
+  // 输入框随内容自动增高（上限由 CSS/JS 限制）
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+  }, [input]);
+
+  /** 线索点击：平滑滚动定位到对应消息 */
+  function jumpTo(idx) {
+    document.getElementById(`msg-${idx}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /** Enter 发送（输入法组词中不触发），Shift+Enter 换行 */
+  function handleComposerKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      handleSend(e);
+    }
+  }
+
+  /** 左侧场次栏开合：首次展开时才拉取列表 */
+  function toggleSidebar() {
+    const next = !sidebarOpen;
+    setSidebarOpen(next);
+    if (next && history === null) openHistory();
+  }
+
   /** 法学助手出场：输入框上方「法」浮框点击直接触发开场白，用户不发消息、无 user 气泡，浮框常驻 */
   async function greetLaw() {
     if (sending || !session) return;
@@ -480,7 +527,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
       next[idx] = { ...next[idx], revising: true };
       return next;
     });
-    inputRef.current?.focus();
+    taRef.current?.focus();
   }
 
   /** 打开历史面板 */
@@ -508,13 +555,14 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
   // 卸载时停止通知轮询
   useEffect(() => () => stopNoticesPolling(), []);
 
-  /** 从历史切回某一场 */
+  /** 从侧栏切回某一场 */
   async function switchSession(item) {
     try {
       await openSession(item.sessionId);
-      setHistory(null);
       setInput('');
-      inputRef.current?.focus();
+      taRef.current?.focus();
+      // 窄屏抽屉：选完即收起；宽屏保持展开
+      if (window.matchMedia('(max-width: 768px)').matches) setSidebarOpen(false);
     } catch (err) {
       alert(`进入失败：${err.message}`);
     }
@@ -526,11 +574,10 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     try {
       await api(`/api/idea/sessions/${item.sessionId}`, { method: 'DELETE' });
       if (session?.sessionId === item.sessionId) {
-        setHistory(null);
         startSession().catch(() => {});
-      } else {
-        setHistory(await api('/api/idea/sessions'));
       }
+      setHistory(await api('/api/idea/sessions')); // 列表在侧栏里就地刷新
+      if (window.matchMedia('(max-width: 768px)').matches) setSidebarOpen(false);
     } catch (err) {
       alert(`删除失败：${err.message}`);
     }
@@ -543,7 +590,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
   function renderCard(m, i) {
     const confirmed = m.card.status === 'CONFIRMED';
     return (
-      <div key={i} className={`fc-wrap ${m.stamped ? 'card-stamped' : ''}`}>
+      <div key={i} id={`msg-${i}`} className={`fc-wrap ${m.stamped ? 'card-stamped' : ''}`}>
         <FeatureCard
           card={m.card}
           className="fc-in-chat"
@@ -586,7 +633,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
       });
     };
     return (
-      <div key={i} className="quiz-card">
+      <div key={i} id={`msg-${i}`} className="quiz-card">
         {q.no ? <div className="quiz-no">第 {q.no} 题{q.type && q.type !== '单选' ? `（${q.type}${multi ? '，可多选' : ''}）` : ''}</div> : null}
         <div className="quiz-meta">
           {q.knowledgePoints?.map((kp) => (
@@ -639,8 +686,72 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
   }
 
   return (
-    <div className="chat-page">
+    <div className="chat-shell">
+      {/* 左侧场次栏：宽屏常驻可抽拉收起，窄屏为遮罩抽屉 */}
+      <aside className={`chat-aside${sidebarOpen ? ' open' : ''}`}>
+        <div className="aside-head">
+          <button
+            type="button"
+            className="aside-new-btn"
+            title="新开一场"
+            aria-label="新开一场"
+            onClick={() => startSession().catch((e) => alert(e.message))}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              strokeLinecap="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+        <div className="aside-label">历史场次</div>
+        <div className="aside-list">
+          {history === 'loading' ? (
+            <p className="aside-empty">加载中…</p>
+          ) : !history || history.length === 0 ? (
+            <p className="aside-empty">还没有聊过，快和百晓通聊聊吧～</p>
+          ) : (
+            history.map((item) => (
+              <div
+                key={item.sessionId}
+                className={`aside-item${session?.sessionId === item.sessionId ? ' active' : ''}`}
+              >
+                <button className="aside-item-main" onClick={() => switchSession(item)}>
+                  <span className="aside-item-title">{item.preview}</span>
+                  <span className="aside-item-meta">
+                    {item.createdAt} · {item.cardCount} 张功能卡
+                  </span>
+                </button>
+                <button className="aside-item-del" title="删除这场" aria-label="删除这场"
+                  onClick={() => removeSession(item)}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                  </svg>
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </aside>
+      <div
+        className={`aside-mask${sidebarOpen ? ' show' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+        aria-hidden="true"
+      />
+
+      <div className="chat-main">
       <header className="chat-header">
+        <button type="button" className="icon-btn side-toggle" title="历史场次" aria-label="历史场次"
+          onClick={toggleSidebar}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <line x1="9" y1="4" x2="9" y2="20" />
+          </svg>
+        </button>
         <div className="brand-menu" ref={brandRef}>
           <button
             type="button"
@@ -667,12 +778,6 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
         </div>
         <div className="header-actions">
           <ForgeBell onOpenJob={onOpenForge} />
-          <button type="button" className="icon-btn" title="聊天记录" aria-label="聊天记录" onClick={openHistory}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-            </svg>
-          </button>
           <button type="button" className="icon-btn" title="新开一场" aria-label="新开一场"
             onClick={() => startSession().catch((e) => alert(e.message))}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -700,7 +805,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
           ) : m.role === 'question' ? (
             renderQuiz(m, i)
           ) : (
-            <div key={i} className={`bubble ${m.role}`}>
+            <div key={i} id={`msg-${i}`} className={`bubble ${m.role}`}>
               {m.role === 'assistant' && m.steps?.length > 0 && (
                 <ThinkingPanel
                   steps={m.steps}
@@ -778,89 +883,91 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
         </div>
       </main>
 
-      {design && (
-        <section className="design-panel">
-          <button className="design-head" onClick={() => setDesignOpen((v) => !v)}>
-            <span className="design-title">营造图</span>
-            <span className="design-scale">{design.scale === '应用' ? '新道场 · 应用' : '小件 · 功能'}</span>
-            {design.agenda && <span className="design-agenda">本轮推进：{design.agenda}</span>}
-            <span className="design-toggle">{designOpen ? '收起' : '展开'}</span>
-          </button>
-          {designOpen && (
-            <div className="design-grid">
-              {design.cells.map((c) => (
-                <div key={c.key} className={`design-cell${c.pending ? ' pending' : ''}${c.fresh ? ' fresh' : ''}`}>
-                  <span className="design-cell-label">
-                    {c.label}
-                    {c.fresh && <i className="design-fresh">新</i>}
-                  </span>
-                  <p className="design-cell-text">{c.text}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+      {/* 右侧对话线索：悬浮展开，点击定位到历史消息 */}
+      {outlineItems.length >= 4 && (
+        <nav className="chat-outline" aria-label="对话线索">
+          {outlineItems.map((o) => (
+            <button
+              key={o.idx}
+              type="button"
+              className={`outline-item k-${o.kind}`}
+              title={o.text}
+              onClick={() => jumpTo(o.idx)}
+            >
+              <span className="outline-dot" />
+              <span className="outline-text">
+                {o.text.replace(/[#*`>[\]~-]/g, ' ').trim().slice(0, 42) || '（空）'}
+              </span>
+            </button>
+          ))}
+        </nav>
       )}
 
-      <div className="hint-row">
-        <div
-          className={`law-hint hint-law${sending ? ' disabled' : ''}`}
-          onClick={greetLaw}
-          title="点击请出法学助手"
-        >
-          <span className="law-hint-badge">法</span>
-          <span className="law-hint-text">法学助手</span>
-        </div>
-        <div
-          className={`law-hint hint-stock${sending ? ' disabled' : ''}`}
-          onClick={greetStock}
-          title="谈股论道 · 道场营造中"
-        >
-          <span className="law-hint-badge dao">道</span>
-          <span className="law-hint-text">谈股论道</span>
-        </div>
-      </div>
-
-      <form className="chat-input" onSubmit={handleSend}>
-        <input
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={messages.some((m) => m.revising) ? '说说这张卡想怎么改…' : '和百晓通聊聊你想要的…'}
-          disabled={sending}
-        />
-        <button type="submit" disabled={sending || !input.trim()}>
-          发送
-        </button>
-      </form>
-
-      {history && (
-        <div className="modal-mask" onClick={() => setHistory(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>历史场次</h3>
-            {history === 'loading' ? (
-              <p className="history-empty">加载中…</p>
-            ) : history.length === 0 ? (
-              <p className="history-empty">还没有聊过，快和百晓通聊聊吧～</p>
-            ) : (
-              history.map((item) => (
-                <div key={item.sessionId} className="history-item">
-                  <button className="history-main" onClick={() => switchSession(item)}>
-                    <span className="history-preview">{item.preview}</span>
-                    <span className="history-meta">
-                      {item.createdAt} · {item.cardCount} 张功能卡
-                      {session?.sessionId === item.sessionId ? ' · 当前' : ''}
+      {/* 底部输入区：营造图 + 能力入口 + 输入框收在同一竖列 */}
+      <div className="composer-zone">
+        {design && (
+          <section className="design-panel">
+            <button className="design-head" onClick={() => setDesignOpen((v) => !v)}>
+              <span className="design-title">营造图</span>
+              <span className="design-scale">{design.scale === '应用' ? '新道场 · 应用' : '小件 · 功能'}</span>
+              {design.agenda && <span className="design-agenda">本轮推进：{design.agenda}</span>}
+              <span className="design-toggle">{designOpen ? '收起' : '展开'}</span>
+            </button>
+            {designOpen && (
+              <div className="design-grid">
+                {design.cells.map((c) => (
+                  <div key={c.key} className={`design-cell${c.pending ? ' pending' : ''}${c.fresh ? ' fresh' : ''}`}>
+                    <span className="design-cell-label">
+                      {c.label}
+                      {c.fresh && <i className="design-fresh">新</i>}
                     </span>
-                  </button>
-                  <button className="history-del" onClick={() => removeSession(item)}>
-                    删除
-                  </button>
-                </div>
-              ))
+                    <p className="design-cell-text">{c.text}</p>
+                  </div>
+                ))}
+              </div>
             )}
+          </section>
+        )}
+
+        <div className="hint-row">
+          <div
+            className={`law-hint hint-law${sending ? ' disabled' : ''}`}
+            onClick={greetLaw}
+            title="点击请出法学助手"
+          >
+            <span className="law-hint-badge">法</span>
+            <span className="law-hint-text">法学助手</span>
+          </div>
+          <div
+            className={`law-hint hint-stock${sending ? ' disabled' : ''}`}
+            onClick={greetStock}
+            title="谈股论道 · 道场营造中"
+          >
+            <span className="law-hint-badge dao">道</span>
+            <span className="law-hint-text">谈股论道</span>
           </div>
         </div>
-      )}
+
+        <form className="composer" onSubmit={handleSend}>
+          <textarea
+            ref={taRef}
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleComposerKey}
+            placeholder={messages.some((m) => m.revising) ? '说说这张卡想怎么改…' : '和百晓通聊聊你想要的…'}
+            disabled={sending}
+          />
+          <button type="submit" className="composer-send" disabled={sending || !input.trim()} aria-label="发送">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="12" y1="19" x2="12" y2="5" />
+              <polyline points="5 12 12 5 19 12" />
+            </svg>
+          </button>
+        </form>
+      </div>
+      </div>
 
       {showFortune && <Fortune onClose={() => setShowFortune(false)} />}
 

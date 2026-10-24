@@ -334,14 +334,14 @@
   flex-direction: column;
 }
 
-/* 消息列内层：宽屏收敛为居中窄栏（820px），气泡左右对齐不受影响 */
+/* 消息列内层：宽屏收敛为居中窄栏（920px），气泡左右对齐不受影响 */
 .chat-col {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: 100%;
-  max-width: 820px;
+  max-width: 920px;
   margin-inline: auto;
 }
 
@@ -372,6 +372,7 @@
 
 .bubble.assistant {
   align-self: flex-start;
+  max-width: 100%; /* 助手长回答吃满栏宽，阅读不受挤压（用户气泡仍 72%） */
   background: #ffffff;
   color: #1d1d1f;
   border: 1px solid #e3e3e8;
@@ -702,13 +703,9 @@
   cursor: pointer;
 }
 
-/* PC 端适配：营造图面板与输入区收敛为居中窄栏，保持合理的聊天框大小与阅读宽度
-   （消息列由 .chat-col 常态收敛，气泡对齐不受影响） */
+/* PC 端适配：造物线会话（.chat-input）输入框收敛为居中窄栏
+   （聊天页输入区已由 .composer-zone 收敛，不受此块影响） */
 @media (min-width: 641px) {
-  .design-panel {
-    max-width: 860px;
-    margin-inline: auto;
-  }
   .chat-input {
     justify-content: center;
   }
@@ -1451,73 +1448,6 @@
   outline: none;
 }
 
-/* ---------- 历史场次 ---------- */
-
-.history-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.history-item:last-child {
-  border-bottom: none;
-}
-
-.history-main {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 8px 10px;
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.history-main:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-.history-preview {
-  color: #1d1d1f;
-  font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.history-meta {
-  color: #6e6e73;
-  font-size: 12px;
-}
-
-.history-del {
-  flex: none;
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  cursor: pointer;
-  border: 1px solid rgba(213, 69, 90, 0.4);
-  background: transparent;
-  color: #d5455a;
-}
-
-.history-del:hover {
-  background: rgba(213, 69, 90, 0.12);
-}
-
-.history-empty {
-  color: #6e6e73;
-  font-size: 14px;
-  text-align: center;
-  padding: 28px 0;
-}
-
 /* ---------- 修为墙 ---------- */
 
 .view-tabs {
@@ -1928,10 +1858,11 @@
 /* ---------- 营造图（仙班共创设计稿面板，输入区上方） ---------- */
 
 .design-panel {
-  margin: 0 20px 8px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 14px;
-  background: rgba(0, 0, 0, 0.03);
+  margin: 0 0 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.05);
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -2172,10 +2103,13 @@
   .bubble {
     max-width: 86%;
   }
+  .bubble.assistant {
+    max-width: 100%; /* 助手气泡移动端同样吃满栏宽 */
+  }
 
-  /* 营造图：双列紧凑（10 格单列过长），议程隐藏 */
+  /* 营造图：双列紧凑（10 格单列过长），议程隐藏（左右留白由 .composer-zone 控制） */
   .design-panel {
-    margin: 0 14px 6px;
+    margin: 0 0 8px;
   }
   .design-head {
     padding: 8px 12px;
@@ -2671,5 +2605,413 @@
 @media (max-width: 640px) {
   .md-body table { font-size: 0.85em; }
   .md-body th, .md-body td { padding: 4px 7px; }
+}
+
+/* ===== 聊天页改版：左侧场次栏 + 右侧对话线索 + 底部输入区 ===== */
+
+.chat-shell {
+  height: 100vh;
+  height: 100dvh; /* 移动端地址栏收展时不跳动 */
+  display: flex;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+/* ---- 左侧场次栏 ---- */
+
+.chat-aside {
+  flex: none;
+  width: 268px;
+  margin-left: -268px; /* 收起=整体滑出，内容不挤压回流 */
+  display: flex;
+  flex-direction: column;
+  background: #f4f5f7;
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  transition: margin-left 0.25s ease;
+}
+
+.chat-aside.open {
+  margin-left: 0;
+}
+
+.aside-head {
+  padding: 14px 12px 4px;
+}
+
+.aside-new-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1d1d1f;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.aside-new-btn:hover {
+  background: #fafafa;
+}
+
+.aside-new-btn svg {
+  width: 16px;
+  height: 16px;
+  color: #6e6e73;
+}
+
+.aside-label {
+  padding: 14px 18px 6px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #9a9aa0;
+}
+
+.aside-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aside-empty {
+  padding: 24px 10px;
+  color: #9a9aa0;
+  font-size: 13px;
+  line-height: 1.7;
+  text-align: center;
+}
+
+.aside-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+}
+
+.aside-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 32px 9px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.aside-item-main:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.aside-item.active .aside-item-main {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.aside-item.active .aside-item-title {
+  font-weight: 600;
+}
+
+.aside-item-title {
+  font-size: 13px;
+  color: #1d1d1f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aside-item-meta {
+  font-size: 11px;
+  color: #9a9aa0;
+}
+
+.aside-item-del {
+  position: absolute;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #b9b9bf;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.aside-item:hover .aside-item-del,
+.aside-item-del:focus-visible {
+  opacity: 1;
+}
+
+.aside-item-del:hover {
+  color: #d5455a;
+  background: rgba(213, 69, 90, 0.1);
+}
+
+.aside-item-del svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* 窄屏遮罩：抽屉打开时盖住主区（桌面端不渲染） */
+.aside-mask {
+  display: none;
+}
+
+/* ---- 主区 ---- */
+
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(circle at 50% 0%, #ffffff 0%, #f5f5f7 55%);
+}
+
+/* 顶栏抽拉按钮：侧栏收起时唯一的入口，保持可点 */
+.side-toggle {
+  flex: none;
+}
+
+/* 消息列右侧给线索浮层留位 */
+.chat-main .chat-list {
+  padding-right: 48px;
+}
+
+/* ---- 右侧对话线索：悬浮展开，点击定位到历史消息 ---- */
+
+.chat-outline {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 30px;
+  max-height: 62vh;
+  overflow-y: auto;
+  padding: 6px 4px;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(6px);
+  transition: width 0.2s ease;
+}
+
+.chat-outline:hover,
+.chat-outline:focus-within {
+  width: 252px;
+}
+
+.outline-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  flex: none;
+  padding: 5px 4px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.outline-item:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* 收起态只显示彩色圆点，悬浮后圆点靠左、摘要展开 */
+.outline-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: #c8c8ce;
+  transition: margin 0.15s ease;
+}
+
+.chat-outline:hover .outline-dot,
+.chat-outline:focus-within .outline-dot {
+  margin: 0;
+}
+
+.outline-text {
+  display: none;
+  min-width: 0;
+  font-size: 12px;
+  color: #6e6e73;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-outline:hover .outline-text,
+.chat-outline:focus-within .outline-text {
+  display: block;
+}
+
+/* 消息类型配色点：用户=蓝 / 功能卡=黑(大) / 题目=金 / 其余=灰 */
+.outline-item.k-user .outline-dot { background: #8fb3e0; }
+.outline-item.k-card .outline-dot { background: #1d1d1f; width: 8px; height: 8px; }
+.outline-item.k-question .outline-dot { background: #d9a84e; }
+
+/* 线索定位锚点的滚动留白 */
+.chat-col [id^='msg-'] {
+  scroll-margin-top: 14px;
+}
+
+/* ---- 底部输入区：营造图 + 能力入口 + 输入框同一竖列 ---- */
+
+.composer-zone {
+  box-sizing: border-box;
+  flex: none;
+  width: 100%;
+  /* 与消息列逐像素对齐：镜像 .chat-list 的不对称内边距（左20/右48）+ .chat-col 的 920px 栏宽上限
+     （988 = 920 + 20 + 48），保证宽窄屏下两者左边缘始终同线 */
+  max-width: 988px;
+  margin: 0 auto;
+  padding: 0 48px 14px 20px;
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 9px 9px 9px 18px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.composer:focus-within {
+  border-color: rgba(0, 0, 0, 0.26);
+  box-shadow: 0 6px 26px rgba(0, 0, 0, 0.1);
+}
+
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  resize: none;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1d1d1f;
+  max-height: 180px;
+}
+
+.composer textarea:disabled {
+  color: #9a9aa0;
+}
+
+.composer textarea::placeholder {
+  color: #b9b9bf;
+}
+
+.composer-send {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #1d1d1f;
+  color: #ffffff;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.composer-send svg {
+  width: 18px;
+  height: 18px;
+}
+
+.composer-send:hover:not(:disabled) {
+  background: #000000;
+  transform: translateY(-1px);
+}
+
+.composer-send:disabled {
+  background: #e3e3e8;
+  cursor: default;
+}
+
+/* ---- 窄屏：侧栏变抽屉 + 隐藏线索 + 输入区避让手势条 ---- */
+
+@media (max-width: 768px) {
+  .chat-aside {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 60;
+    width: min(80vw, 300px);
+    margin-left: -320px; /* 比宽度更大，确保完全滑出 */
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.18);
+  }
+
+  .chat-aside.open {
+    margin-left: 0;
+  }
+
+  .aside-mask.show {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0, 0, 0, 0.4);
+    animation: mask-in 0.2s ease;
+  }
+
+  .chat-outline {
+    display: none; /* 窄屏无线索浮层 */
+  }
+
+  .chat-main .chat-list {
+    padding: 14px; /* 覆盖桌面端为线索留的右留白 */
+  }
+
+  .composer-zone {
+    padding: 0 14px calc(10px + env(safe-area-inset-bottom)); /* 与消息区 14px 留白对齐 + 手势条避让 */
+  }
+
+  .composer {
+    padding: 7px 7px 7px 14px;
+    border-radius: 20px;
+  }
+
+  .composer textarea {
+    font-size: 16px; /* 防 iOS 聚焦自动放大 */
+  }
+}
+
+@keyframes mask-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
