@@ -11,7 +11,8 @@ Type=simple
 # 与部署用户一致：CI 上传 jar 到 /opt/meng-x/ 后可直接重启，无权限问题
 User=mengx
 WorkingDirectory=/opt/meng-x
-ExecStart=/usr/bin/java -jar /opt/meng-x/meng-x-server.jar
+# 4G 内存机器：堆固定 1G，给 PostgreSQL / 系统留余量，避免堆伸缩抖动
+ExecStart=/usr/bin/java -Xms512m -Xmx1g -jar /opt/meng-x/meng-x-server.jar
 Restart=on-failure
 RestartSec=5
 

@@ -8,9 +8,9 @@ DEPLOY_USER=mengx
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE=/opt/meng-x/meng-x.env
 
-echo "==> [1/8] 安装 JDK 17 / Nginx / PostgreSQL"
+echo "==> [1/8] 安装 JDK 17 / Nginx / PostgreSQL（pgvector 向量扩展 + pg_trgm 为 RAG 检索必需，需 Ubuntu 24.04）"
 apt-get update
-apt-get install -y openjdk-17-jre-headless nginx postgresql
+apt-get install -y openjdk-17-jre-headless nginx postgresql postgresql-16-pgvector postgresql-contrib
 
 echo "==> [2/8] 创建部署/运行用户: $DEPLOY_USER"
 if ! id "$DEPLOY_USER" &>/dev/null; then
@@ -31,13 +31,25 @@ else
 CREATE USER mengx WITH PASSWORD '$DB_PASSWORD';
 CREATE DATABASE mengx OWNER mengx;
 SQL
+  # RAG 向量列与 trgm 检索依赖的扩展（幂等，重跑安全）
+  sudo -u postgres psql -v ON_ERROR_STOP=1 -d mengx <<SQL
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+SQL
   cat > "$ENV_FILE" <<ENVEOF
 MENGX_DB_URL=jdbc:postgresql://127.0.0.1:5432/mengx
 MENGX_DB_USER=mengx
 MENGX_DB_PASSWORD=$DB_PASSWORD
 MENGX_JWT_SECRET=$JWT_SECRET
-# 智谱 GLM Key，手动填入后 systemctl restart meng-x 生效:
+# ===== 以下键手动填入后 systemctl restart meng-x 生效 =====
+# 智谱 GLM Key:
 # MENGX_LLM_API_KEY=replace-me
+# 千问 embedding Key（RAG 向量化）:
+# MENGX_EMBEDDING_API_KEY=replace-me
+# 法条数据目录（LawRefBook/Laws 结构，上传后填实际路径）:
+# MENGX_LAW_DATA_DIR=/opt/meng-x/data/laws
+# 历年真题目录（上传后填实际路径）:
+# MENGX_LAW_QUESTION_DIR=/opt/meng-x/data/questions
 ENVEOF
   chown "$DEPLOY_USER:$DEPLOY_USER" "$ENV_FILE"
   chmod 600 "$ENV_FILE"

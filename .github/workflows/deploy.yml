@@ -1,9 +1,9 @@
 name: build-and-deploy
 
-# push 到 main 且涉及前后端代码时触发；小程序目录不参与
+# push 到 prd/prd 分支且涉及前后端代码时触发生产部署；main 为开发分支不部署
 on:
   push:
-    branches: [main]
+    branches: ['prd/prd']
     paths:
       - 'server/**'
       - 'web/**'

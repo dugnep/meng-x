@@ -6,15 +6,15 @@
 ## 1. 架构总览
 
 ```
-git push 到 main
+git push 到 prd/prd 分支（main 为开发分支，推送不触发部署）
       ↓ 自动触发
 GitHub Actions（构建，服务器不参与构建）
   ├─ mvn package  → meng-x-server.jar
   └─ vite build   → web/dist/
       ↓ scp 上传 + ssh 重启
-云服务器（2C2G Ubuntu 24.04，只运行产物）
-  ├─ systemd 守护 java -jar（服务名 meng-x，端口 8080）
-  ├─ PostgreSQL 16（库名 mengx，本地 127.0.0.1:5432）
+云服务器（4核4G Ubuntu 24.04，只运行产物）
+  ├─ systemd 守护 java -jar（服务名 meng-x，端口 8080，堆 1G）
+  ├─ PostgreSQL 16 + pgvector + pg_trgm（库名 mengx，唯一数据源——本地开发也直连此库）
   └─ Nginx：托管 /var/www/meng-x + /api/ 反代 127.0.0.1:8080
 ```
 
@@ -39,9 +39,29 @@ psql -U postgres -c "CREATE DATABASE mengx OWNER mengx;"
 
 ## 3. 服务器采购
 
-- 阿里云/腾讯云，**2C2G + Ubuntu 24.04 LTS**，带宽 3-5M
-- 安全组/防火墙放行：**22（SSH）、80、443**
+- 腾讯云轻量应用服务器/CVM，**4核4G + Ubuntu 24.04 LTS**（必须 24.04：pgvector 在源内），带宽 3-5M
+- 安全组/防火墙放行：**22（SSH）、80、443**（本地开发经 SSH 隧道连库，5432 不对公网开放，见 3.5 节）
 - 域名与 ICP 备案可后置，前期用公网 IP 访问
+
+## 3.5 数据迁移与本地直连（唯一数据源）
+
+本地已有的数据（业务表 + RAG 已向量化的法条/真题）整库迁过去，服务器无需再跑导入管道：
+
+```powershell
+# 本地导出（mengx 库，含向量数据；必须用 -f 写文件，PowerShell 的 > 重定向会损坏二进制）
+$env:PGPASSWORD='本机postgres密码'; pg_dump -U postgres -Fc -f mengx.dump mengx
+scp mengx.dump ubuntu@服务器IP:/tmp/mengx.dump
+```
+
+服务器上导入（**必须先跑完 server-setup.sh，且在后端首次启动前**——后端启动会 ddl-auto 建表，先建了表再导入会冲突）：
+
+```bash
+sudo -u postgres pg_restore -d mengx --no-owner --role=mengx /tmp/mengx.dump
+```
+
+若后端已启动过一次（表已建），改用 `--clean --if-exists` 覆盖导入。
+
+本地开发直连服务器库采用 **SSH 隧道方案**（家宽 IP 不固定、数据库端口不对公网暴露），完整配置与排障见 [LOCAL-DEV.md](./LOCAL-DEV.md)。
 
 ## 4. 服务器初始化（一次性，root 执行）
 
@@ -83,19 +103,19 @@ git remote add origin git@github.com:你的用户名/meng-x.git
 git push -u origin main
 ```
 
-此后每次 push 到 main 且改动涉及 `server/` 或 `web/`，Actions 自动构建部署，约 3-5 分钟生效。
+此后每次 push 到 **prd/prd 分支**且改动涉及 `server/` 或 `web/`，Actions 自动构建部署，约 3-5 分钟生效；**push 到 main 不部署**（开发分支，随你怎么推）。日常发版流程：main 开发测试 → `git checkout prd/prd && git merge main && git push origin prd/prd`。
 
 ## 7. 本地开发
 
 ```powershell
-# 后端（需本地 PG 已建库，见第 2 步）
+# 后端（连服务器库，见 3.5 节 application-local.yml 配置）
 cd server; mvn spring-boot:run          # http://localhost:8080
 
 # 前端（/api 自动代理到 8080）
 cd web; npm run dev                     # http://localhost:5173
 ```
 
-默认账号（首次启动自动创建）：手机号 `13800000000`，密码 `123456`。
+本地与服务端共用同一套数据：本地跑导入/更新（法条、真题）直接写入服务器库，两边即刻一致。
 
 ## 8. 服务器常用运维命令
 

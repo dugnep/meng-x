@@ -16,6 +16,12 @@ server/src/main/resources/application-local.yml
 # 法学 RAG 数据源（法条/真题/教材，体积大且有独立更新节奏，不入库）
 data/law/
 
+# 本地数据备份与临时产物（含整库导出，绝不入库）
+data/backup/
+mengx.dump
+*.dump
+tt.json
+
 # IDE
 .idea/
 *.iml
