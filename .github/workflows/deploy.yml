@@ -1,6 +1,9 @@
 name: build-and-deploy
 
-# push 到 prd/prd 分支且涉及前后端代码时触发生产部署；main 为开发分支不部署
+# push 到 prd/prd 分支且涉及前后端代码时触发生产部署；main 为开发分支不部署。
+# 全程跑在云服务器的 self-hosted runner 上：构建与部署同机完成，无跨境上传
+# （原 GitHub 境外 runner → 国内服务器 scp 上传 jar 需 6 分钟+，是部署瓶颈）。
+# runner 安装与工具链预置见 deploy/README.md 第 5 节。
 on:
   push:
     branches: ['prd/prd']
@@ -9,70 +12,36 @@ on:
       - 'web/**'
       - '.github/workflows/deploy.yml'
 
+# 连续推送时取消进行中的旧部署：4G 内存机器，避免两个构建同时跑
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---------- 构建后端 ----------
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: maven
-          cache-dependency-path: server/pom.xml
-
+      # 服务器已预装 JDK17/Maven/Node20（apt），依赖缓存在 runner 本机 ~/.m2 与 ~/.npm，
+      # 天然持久化，无需 setup-java/setup-node/cache 步骤
       - name: Build server jar
         working-directory: server
+        env:
+          MAVEN_OPTS: -Xmx512m    # 限 Maven 堆：与后端服务(1G)+PG 共存于 4G 内存
         run: mvn -B clean package -DskipTests
-
-      # ---------- 构建前端 ----------
-      - name: Set up Node 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
 
       - name: Build web dist
         working-directory: web
         run: npm ci && npm run build
 
-      # ---------- 部署到云服务器 ----------
-      # 需在仓库 Settings → Secrets and variables → Actions 配置:
-      #   SERVER_HOST     服务器公网 IP
-      #   SERVER_USER     部署用户（server-setup.sh 创建的 mengx）
-      #   SERVER_SSH_KEY  部署私钥（与服务器 authorized_keys 中的公钥配对）
-      - name: Upload server jar
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: server/target/meng-x-server.jar
-          target: /opt/meng-x/
-          strip_components: 2
-
-      - name: Upload web dist
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: web/dist/*
-          target: /var/www/meng-x/
-          strip_components: 2
-
-      - name: Restart backend service
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            sudo systemctl restart meng-x
-            sleep 3
-            sudo systemctl status meng-x --no-pager | head -n 5
+      # 同机部署：本地拷贝替代原 scp-action + ssh-action（不再需要 GitHub Secrets）
+      - name: Deploy and restart
+        run: |
+          sudo cp server/target/meng-x-server.jar /opt/meng-x/meng-x-server.jar
+          sudo cp -r web/dist/. /var/www/meng-x/
+          sudo systemctl restart meng-x
+          sleep 3
+          systemctl is-active meng-x
