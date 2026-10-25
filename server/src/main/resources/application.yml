@@ -49,15 +49,27 @@ ai:
     # route=意图路由等轻量二分类。
     # host 用 glm-4-flash（免费档）：Host 职责已瘦身为转述+闲聊+专业问答，指令遵循压力小；
     # agent 用 glm-5.3-Flash（付费资源包）：推演/装配/法学出题批改等复杂结构化任务吃质量
+    # thinking 分档（2026-10 实测智谱 v4 端点 + 官方文档）：glm-5.3-flash 为强制思考模型，
+    # thinking.type 仅 enabled 合法；思考强度经顶层参数 reasoning_effort 控制（low/high/max，
+    # 默认 max 一句闲聊思考数百 token、low 实测降至几十~两百），zhipu-ai 客户端不支持该参数，
+    # agent 档经 langchain4j-open-ai 走智谱 OpenAI 兼容端点（同 key）传递；
+    # host/route 的 4-flash 传 disabled 兼容。思考 token 计入 completion，agent 档 max-tokens 8192 防截断
     host-name: glm-4-flash
     host-temperature: 0.7
     host-max-tokens: 2048
+    host-thinking: disabled
+    # host 流式并发闸：glm-4-flash 智谱并发上限 20 路，流式请求自发出至流结束全程占一路；
+    # 15 路内直通、超出排队（多用户高峰下排队等待优于直接 429 空回复），留 5 路给路由档与重试
+    host-concurrency-permits: 15
+    host-acquire-timeout-seconds: 60
     agent-name: glm-5.3-flash
     agent-temperature: 0.2
-    agent-max-tokens: 4096
+    agent-max-tokens: 8192
+    agent-reasoning-effort: low
     route-name: glm-4-flash
     route-temperature: 0.1
     route-max-tokens: 256
+    route-thinking: disabled
     timeout-seconds: 60
 
 # 可观测性（零新增容器）：指标走本机 9913 管理端口（Nginx 只转发 /api，公网不可达），

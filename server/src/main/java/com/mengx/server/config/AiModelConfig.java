@@ -1,11 +1,13 @@
 package com.mengx.server.config;
 
+import com.mengx.server.llm.ConcurrencyGuardedStreamingModel;
 import com.mengx.server.llm.ZhipuUsageListener;
 import dev.langchain4j.community.model.zhipu.ZhipuAiChatModel;
 import dev.langchain4j.community.model.zhipu.ZhipuAiStreamingChatModel;
 import dev.langchain4j.community.model.zhipu.chat.Thinking;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
+import dev.langchain4j.model.openai.OpenAiChatModel;
 import java.time.Duration;
 import java.util.List;
 import org.slf4j.Logger;
@@ -17,12 +19,14 @@ import org.springframework.context.annotation.Primary;
 
 /**
  * 智谱 GLM 模型配置（langchain4j 官方社区集成 langchain4j-community-zhipu-ai）：
- * thinking:{"type":"disabled"} 经官方 builder 全局注入，消除 glm-4.7 思考模式
- * 30~40 秒首 token 延迟；该客户端原生支持 tools/function calling，后续 AiServices 可直接挂 @Tool。
+ * agent 档走 langchain4j-open-ai 客户端 + 智谱 OpenAI 兼容端点（同一 api-key）：
+ * glm-5.3-flash 为强制思考模型（thinking.type 仅 enabled 合法），思考强度经顶层参数
+ * reasoning_effort 控制（low/high/max），zhipu-ai 社区模块不支持该参数故换道 open-ai 客户端；
+ * host/route 档（glm-4-flash 非思考）沿用 zhipu 客户端传 thinking disabled 兼容。
  * 三档分工：
- * 流式档（StreamingChatModel）= 前台主对话代理/法学助手，角色扮演，4.7-disabled 保指令遵循；
- * 同步档（ChatModel，@Primary）= 内部结构化 agent（需求澄清双官/观察器/装配器/PRD 格式化器），4.7-disabled；
- * 路由档（ChatModel "routeChatModel"）= 意图路由等轻量二分类，glm-4-flash 快速档。
+ * 流式档（StreamingChatModel）= 前台主对话代理/法学助手，角色扮演；
+ * 同步档（ChatModel，@Primary）= 内部结构化 agent（需求澄清双官/观察器/装配器/PRD 格式化器）；
+ * 路由档（ChatModel "routeChatModel"）= 意图路由等轻量二分类。
  * 重试：同步档 maxRetries=2（限流/网络故障退避重试一次）；流式档沿用官方默认
  * （仅首响应失败重试，已输出正文后断流不重试），与项目低并发退避策略一致。
  * api-key 缺失时返回 null（Bean 不注册），应用仍可启动，调用时给出明确错误。
@@ -31,9 +35,6 @@ import org.springframework.context.annotation.Primary;
 public class AiModelConfig {
 
     private static final Logger log = LoggerFactory.getLogger(AiModelConfig.class);
-
-    /** 全档统一关闭思考模式（flash 收到该字段亦兼容；与旧自研客户端行为一致） */
-    private static final Thinking THINKING_DISABLED = Thinking.builder().type("disabled").build();
 
     @Value("${ai.model.base-url}")
     private String baseUrl;
@@ -51,6 +52,21 @@ public class AiModelConfig {
     @Value("${ai.model.host-max-tokens:2048}")
     private Integer hostMaxTokens;
 
+    /** 思考力度：非思考模型传 disabled；强制思考模型（5.3-flash）仅 enabled 可用 */
+    @Value("${ai.model.host-thinking:disabled}")
+    private String hostThinking;
+
+    /**
+     * host 流式并发闸：glm-4-flash 智谱并发上限 20 路，流式请求自发出至流结束全程占一路；
+     * 闸 15 路内直通、超出排队（多用户高峰优雅降级），留 5 路余量给路由档与流式首响重试
+     */
+    @Value("${ai.model.host-concurrency-permits:15}")
+    private Integer hostConcurrencyPermits;
+
+    /** 并发闸排队上限：等待超过该秒数走前端 error 兜底，避免无限挂起 */
+    @Value("${ai.model.host-acquire-timeout-seconds:60}")
+    private Long hostAcquireTimeoutSeconds;
+
     /** 内部结构化 agent（需求澄清双官/观察器/装配器/PRD 格式化器等） */
     @Value("${ai.model.agent-name:glm-4-plus}")
     private String agentName;
@@ -60,6 +76,10 @@ public class AiModelConfig {
 
     @Value("${ai.model.agent-max-tokens:4096}")
     private Integer agentMaxTokens;
+
+    /** 思考强度（GLM-5.3 系列强制思考，经 reasoning_effort 降档省 token）：low/high/max */
+    @Value("${ai.model.agent-reasoning-effort:}")
+    private String agentReasoningEffort;
 
     /** 意图路由等轻量分类（glm-4-flash 非思考快速档） */
     @Value("${ai.model.route-name:glm-4-flash}")
@@ -71,11 +91,19 @@ public class AiModelConfig {
     @Value("${ai.model.route-max-tokens:256}")
     private Integer routeMaxTokens;
 
+    @Value("${ai.model.route-thinking:disabled}")
+    private String routeThinking;
+
     @Value("${ai.model.timeout-seconds:60}")
     private Integer timeoutSeconds;
 
     private boolean configured() {
         return apiKey != null && !apiKey.isBlank();
+    }
+
+    /** 按档构建思考力度参数（type 值由服务端校验：disabled/low/high/max 等） */
+    private Thinking thinking(String type) {
+        return Thinking.builder().type(type).build();
     }
 
     /**
@@ -96,29 +124,35 @@ public class AiModelConfig {
         return url + "/";
     }
 
-    /** 流式聊天模型（主对话代理/法学助手对话主链路，thinking 关闭） */
+    /** 流式聊天模型（主对话代理/法学助手对话主链路），外包并发闸防多用户高峰打爆智谱配额 */
     @Bean
     public StreamingChatModel streamingChatModel() {
         if (!configured()) {
             log.warn("ai.model.api-key 未配置，跳过流式模型初始化（对话接口不可用）");
             return null;
         }
-        log.info("初始化流式模型（主对话/法学，thinking 已关闭）: model={}, temperature={}",
-                hostName, hostTemperature);
-        return ZhipuAiStreamingChatModel.builder()
+        log.info("初始化流式模型（主对话/法学）: model={}, temperature={}, thinking={}, 并发闸={}路/排队{}s",
+                hostName, hostTemperature, hostThinking, hostConcurrencyPermits, hostAcquireTimeoutSeconds);
+        ZhipuAiStreamingChatModel raw = ZhipuAiStreamingChatModel.builder()
                 .baseUrl(rootBaseUrl())
                 .apiKey(apiKey)
                 .model(hostName)
                 .temperature(hostTemperature)
                 .maxToken(hostMaxTokens)
-                .thinking(THINKING_DISABLED)
+                .thinking(thinking(hostThinking))
                 .callTimeout(Duration.ofSeconds(timeoutSeconds))
                 .connectTimeout(Duration.ofSeconds(15))
                 .listeners(List.of(new ZhipuUsageListener(true)))
                 .build();
+        return new ConcurrencyGuardedStreamingModel(raw, hostConcurrencyPermits, hostAcquireTimeoutSeconds);
     }
 
-    /** 同步模型（需求澄清双官/观察器/装配器/PRD 格式化器等结构化 agent，thinking 关闭）；@Primary 供无 qualifier 注入 */
+    /**
+     * 同步模型（需求澄清双官/观察器/装配器/PRD 格式化器等结构化 agent）；@Primary 供无 qualifier 注入。
+     * 走 langchain4j-open-ai 客户端 + 智谱 OpenAI 兼容端点（同 api-key）：
+     * 仅为传递 reasoning_effort（GLM-5.3 系列思考强度唯一控制途径，zhipu-ai 社区模块未实现该参数）；
+     * OpenAI 客户端不发 thinking 字段，服务端对 5.3-flash 默认开启思考，行为与显式 enabled 等价。
+     */
     @Bean
     @Primary
     public ChatModel chatModel() {
@@ -126,20 +160,21 @@ public class AiModelConfig {
             log.warn("ai.model.api-key 未配置，跳过同步模型初始化");
             return null;
         }
-        log.info("初始化同步模型（结构化 agent，thinking 已关闭）: model={}, temperature={}",
-                agentName, agentTemperature);
-        return ZhipuAiChatModel.builder()
-                .baseUrl(rootBaseUrl())
+        log.info("初始化同步模型（结构化 agent，OpenAI 兼容端点）: model={}, temperature={}, reasoning_effort={}",
+                agentName, agentTemperature, agentReasoningEffort);
+        OpenAiChatModel.OpenAiChatModelBuilder builder = OpenAiChatModel.builder()
+                .baseUrl(rootBaseUrl() + "api/paas/v4/")
                 .apiKey(apiKey)
-                .model(agentName)
+                .modelName(agentName)
                 .temperature(agentTemperature)
-                .maxToken(agentMaxTokens)
-                .thinking(THINKING_DISABLED)
-                .callTimeout(Duration.ofSeconds(timeoutSeconds))
-                .connectTimeout(Duration.ofSeconds(15))
+                .maxTokens(agentMaxTokens)
+                .timeout(Duration.ofSeconds(timeoutSeconds))
                 .maxRetries(2)
-                .listeners(List.of(new ZhipuUsageListener(false)))
-                .build();
+                .listeners(List.of(new ZhipuUsageListener(false)));
+        if (agentReasoningEffort != null && !agentReasoningEffort.isBlank()) {
+            builder.reasoningEffort(agentReasoningEffort);
+        }
+        return builder.build();
     }
 
     /** 路由模型（意图路由二分类，glm-4-flash 快速档） */
@@ -148,14 +183,15 @@ public class AiModelConfig {
         if (!configured()) {
             return null;
         }
-        log.info("初始化路由模型（意图分类）: model={}, temperature={}", routeName, routeTemperature);
+        log.info("初始化路由模型（意图分类）: model={}, temperature={}, thinking={}",
+                routeName, routeTemperature, routeThinking);
         return ZhipuAiChatModel.builder()
                 .baseUrl(rootBaseUrl())
                 .apiKey(apiKey)
                 .model(routeName)
                 .temperature(routeTemperature)
                 .maxToken(routeMaxTokens)
-                .thinking(THINKING_DISABLED)
+                .thinking(thinking(routeThinking))
                 .callTimeout(Duration.ofSeconds(timeoutSeconds))
                 .connectTimeout(Duration.ofSeconds(15))
                 .maxRetries(2)

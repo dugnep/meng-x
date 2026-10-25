@@ -87,6 +87,13 @@
       <artifactId>langchain4j-community-zhipu-ai</artifactId>
       <version>1.18.0-beta28</version>
     </dependency>
+    <!-- OpenAI 兼容客户端：agent 档走智谱 OpenAI 兼容端点（同 key），
+         传递 reasoning_effort 控制思考强度（zhipu-ai 社区模块不支持该参数，GLM-5.3 系列必需） -->
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j-open-ai</artifactId>
+      <version>${langchain4j.version}</version>
+    </dependency>
     <!-- WebFlux：为 MVC 控制器提供 Flux/Reactor 支持（SSE 流式输出） -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
