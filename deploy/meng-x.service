@@ -19,5 +19,10 @@ RestartSec=5
 # 生产密钥（DB 密码、JWT 密钥等）由 server-setup.sh 生成，不存在时忽略
 EnvironmentFile=-/opt/meng-x/meng-x.env
 
+# 文件日志：Spring Boot 原生映射 logging.file.name，与 journalctl 双写；
+# LogsDirectory 由 systemd 自动创建 /var/log/mengx 并 chown 给运行用户；默认每天/10MB 滚动保留 7 天
+Environment=LOGGING_FILE_NAME=/var/log/mengx/app.log
+LogsDirectory=mengx
+
 [Install]
 WantedBy=multi-user.target

@@ -45,12 +45,14 @@ ai:
     # 官方客户端在主机根后自行拼接 api/paas/v4/...，base-url 只填主机根
     base-url: https://open.bigmodel.cn/
     api-key: ${MENGX_LLM_API_KEY:}
-    # 三档分工：host=前台主对话/法学助手（流式角色扮演）；agent=内部结构化（需求澄清双官/观察器/装配器/PRD 格式化器）；
-    # route=意图路由等轻量二分类（glm-4-flash 非思考快速档）
-    host-name: glm-4.7
+    # 三档分工：host=前台主对话/法学助手（流式角色扮演）；agent=内部结构化（共创推演/观察器/装配器/PRD 格式化器）；
+    # route=意图路由等轻量二分类。
+    # host 用 glm-4-flash（免费档）：Host 职责已瘦身为转述+闲聊+专业问答，指令遵循压力小；
+    # agent 用 glm-5.3-Flash（付费资源包）：推演/装配/法学出题批改等复杂结构化任务吃质量
+    host-name: glm-4-flash
     host-temperature: 0.7
     host-max-tokens: 2048
-    agent-name: glm-4.7
+    agent-name: glm-5.3-flash
     agent-temperature: 0.2
     agent-max-tokens: 4096
     route-name: glm-4-flash
