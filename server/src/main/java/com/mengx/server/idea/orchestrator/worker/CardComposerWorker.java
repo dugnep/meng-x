@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 /**
  * 卡片装配器 Worker（异步旁路）：客人点头定稿后把访谈成果装配成功能卡 JSON。
  * 包装 CardComposerAgent.compose()，返回原始 JSON 文本作为 WorkerResult.payload。
- * 卡数上限/落库/解析等业务闸门留在编排层，本 Worker 只做模型装配。
+ * 卡数上限/落库/解析等业务闸门留在编排层，本 Worker只做模型装配。
  */
 @Component
 public class CardComposerWorker implements ChatWorker {
