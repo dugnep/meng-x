@@ -180,7 +180,7 @@ public class ForgeHeraldService {
     public void saveBacklog(Long forgeJobId, String content) {
         Long sessionId = sessionOf(forgeJobId);
         if (sessionId != null) {
-            messageRepository.save(new IdeaMessageEntity(sessionId, "backlog", content));
+            messageRepository.save(new IdeaMessageEntity(sessionId, "backlog", content, "forge", null));
             log.info("工单 {} 记入 backlog：{}", forgeJobId, abbreviate(content, 40));
         }
     }
@@ -263,7 +263,7 @@ public class ForgeHeraldService {
         } catch (Exception e) {
             content = envelope.rendered();
         }
-        messageRepository.save(new IdeaMessageEntity(sessionId, "assistant", content));
+        messageRepository.save(new IdeaMessageEntity(sessionId, "assistant", content, "forge", null));
     }
 
     private static String abbreviate(String s, int max) {

@@ -74,6 +74,7 @@ async function consumeSse(resp, onEvent) {
  * greet：true=法学助手出场触发（无用户消息，由后端注入触发指令，开场白不落 user 行）
  * clientRoundId：一轮对话的幂等键，同键重发后端只落库一次（greet 出场不传）
  * 事件 {type, content}：thinking 掐指一算中 | chunk 增量文本 | card 功能卡 DTO JSON | done 结束 | error 失败
+ *   | meta 响应元信息 JSON（content 为 JSON 字符串：channel/domainFrame/routeIntent/latencyMs/timestamp，旁路埋点用）
  *   | design 营造图 JSON（content 为 JSON 字符串：focus 本轮聚焦 / question 建议问题 / options 建议选项 /
  *     proposal 建议方案 / validity 合理性判定 / decisions 待表态项 / closing / closingConfirmed / ack /
  *     priority / snapshot{core{functions,effects,approach}, dimensions[]} / keyItems[]；

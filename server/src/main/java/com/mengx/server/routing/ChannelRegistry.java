@@ -1,20 +1,19 @@
 package com.mengx.server.routing;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /**
- * 通道注册表：集中登记各能力的路由元数据（默认通道 + 各专项能力）。
- * 分层路由的 L1 信号词与 L2 名册均从此生成；
- * 后续新能力（出题官、批改官、新道场…）在此加条目即可接入路由。
+ * 通道注册表：集中登记各领域能力元数据，供能力名册（共创提示词）等遍历使用。
+ * 旧分层路由（L1 信号词短路 / L2 名册提示词）已随 Host function calling 架构下线，
+ * 路由决策现由 HostWorker 的工具列表承担；新领域接入实现 DomainTool 即可。
  */
 @Component
 public class ChannelRegistry {
 
-    /** 默认通道：不设信号词——所有专项信号都不命中时消息落到这里（主对话陪聊 + 点子访谈） */
+    /** 默认通道：Host 直答（主对话陪聊 + 点子访谈） */
     public static final String DEFAULT_CHANNEL = "host";
 
     private final Map<String, ChannelSpec> channels = new LinkedHashMap<>();
@@ -40,71 +39,39 @@ public class ChannelRegistry {
                         // 婚姻家庭/事故/其他维权
                         "家暴", "出轨", "抚养", "赡养", "扶养", "彩礼", "交通事故", "肇事", "酒驾",
                         "医疗事故", "公证", "举报"),
-                List.of(
-                        "出题", "答题", "做题", "判分", "出几道", "几道题",
-                        "考考我", "考我", "刷题", "练一练", "下一题", "继续出",
-                        "主观题", "案例分析", "简答", "论述"),
+                List.of(),
                 List.of(
                         new ChannelSpec.Example("刑法第13条说的情节显著轻微是什么意思？", "law"),
                         new ChannelSpec.Example("遗嘱都有哪几种形式？", "law"),
                         new ChannelSpec.Example("想看2024年真题", "law"),
                         new ChannelSpec.Example("给我出几道题练练", "law"),
+                        new ChannelSpec.Example("考我几道刑法题", "law"),
+                        new ChannelSpec.Example("交卷：1B 2AD 3C", "law"),
+                        new ChannelSpec.Example("交卷", "law"),
+                        new ChannelSpec.Example("下一题", "law"),
                         new ChannelSpec.Example("租的房子房东不退押金该怎么办？", "law"),
                         new ChannelSpec.Example("我被裁员了，公司拒绝赔偿怎么办", "law"),
                         new ChannelSpec.Example("老板拖欠两个月工资不给怎么维权", "law"),
-                        new ChannelSpec.Example("我想做一个法律咨询助手，专门答合同问题", "host"))));
+                        new ChannelSpec.Example("我想做一个法律咨询助手，专门答合同问题", "host")),
+                // Worker 执行元数据：流式作答 + 法条/真题 RAG 检索，60s 超时
+                WorkerType.SYNC_STREAM, 60_000, true, null, null));
         register(new ChannelSpec(
                 DEFAULT_CHANNEL, "主对话",
                 "功能创意讨论（想给本产品设计新功能/新应用，即使点子内容本身涉及法律，比如想做一个法律咨询助手）、"
                         + "日常闲聊、以及其余一切话题",
                 List.of(),
                 List.of(),
-                List.of(new ChannelSpec.Example("这个点子能落地吗，你觉得怎么样", "host"))));
+                List.of(new ChannelSpec.Example("这个点子能落地吗，你觉得怎么样", "host")),
+                // Worker 执行元数据：流式作答（闲聊/答疑/点子访谈），60s 超时，无需 RAG
+                WorkerType.SYNC_STREAM, 60_000, false, null, null));
     }
 
     private void register(ChannelSpec spec) {
         channels.put(spec.id(), spec);
     }
 
-    public ChannelSpec get(String id) {
-        return id == null ? null : channels.get(id);
-    }
-
-    /** 全部通道（强意图直达遍历用） */
+    /** 全部通道（能力名册遍历用） */
     public java.util.Collection<ChannelSpec> all() {
         return channels.values();
-    }
-
-    /** 消息命中的专项通道集合（默认通道无信号词，不参与） */
-    public List<ChannelSpec> signalMatches(String text) {
-        List<ChannelSpec> hits = new ArrayList<>();
-        if (text == null) {
-            return hits;
-        }
-        for (ChannelSpec spec : channels.values()) {
-            if (spec.id().equals(DEFAULT_CHANNEL) || spec.signals().isEmpty()) {
-                continue;
-            }
-            for (String s : spec.signals()) {
-                if (text.contains(s)) {
-                    hits.add(spec);
-                    break;
-                }
-            }
-        }
-        return hits;
-    }
-
-    /** L2 名册：各通道何时接手（含 few-shot 示例），拼进路由提示词 */
-    public String buildRoster() {
-        StringBuilder sb = new StringBuilder();
-        for (ChannelSpec spec : channels.values()) {
-            sb.append("- ").append(spec.name()).append("（channel=\"").append(spec.id()).append("\"）：")
-                    .append(spec.routeDescription()).append('\n');
-            for (ChannelSpec.Example ex : spec.examples()) {
-                sb.append("  例：\"").append(ex.utterance()).append("\" → ").append(ex.channel()).append('\n');
-            }
-        }
-        return sb.toString().trim();
     }
 }

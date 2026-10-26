@@ -19,7 +19,7 @@ class ChannelRegistryTest {
     @Test
     void 默认通道注册且id为host() {
         assertEquals("host", ChannelRegistry.DEFAULT_CHANNEL);
-        assertEquals("仙官", registry.get(ChannelRegistry.DEFAULT_CHANNEL).name());
+        assertEquals("主对话", registry.get(ChannelRegistry.DEFAULT_CHANNEL).name());
     }
 
     @Test
@@ -70,6 +70,6 @@ class ChannelRegistryTest {
     void L2名册包含全部通道名() {
         String roster = registry.buildRoster();
         assertTrue(roster.contains("法学助手"));
-        assertTrue(roster.contains("仙官"));
+        assertTrue(roster.contains("主对话"));
     }
 }

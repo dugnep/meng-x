@@ -96,11 +96,11 @@ public class IdeaWishService {
         card.applyDesign(null, wishDesignJson(refined, draft));
         card = cardRepository.save(card);
         messageRepository.saveAll(List.of(
-                new IdeaMessageEntity(session.getId(), "user", wish),
+                new IdeaMessageEntity(session.getId(), "user", wish, "host", null),
                 new IdeaMessageEntity(session.getId(), "assistant",
                         "许愿池的精灵把你的愿望炼成了功能卡「" + card.getTitle()
-                                + "」，已收录。你可以继续说说哪里要改，或聊下一个灵感～"),
-                new IdeaMessageEntity(session.getId(), "card", String.valueOf(card.getId()))));
+                                + "」，已收录。你可以继续说说哪里要改，或聊下一个灵感～", "host", null),
+                new IdeaMessageEntity(session.getId(), "card", String.valueOf(card.getId()), "host", null)));
         log.info("愿望定稿成卡成功：用户{} → 《{}》cardId={}", userId, card.getTitle(), card.getId());
         return Optional.of(IdeaCardDto.from(card));
     }
