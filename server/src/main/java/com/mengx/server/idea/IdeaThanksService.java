@@ -80,21 +80,11 @@ public class IdeaThanksService {
                 【已修成的点子】
                 标题：%s
                 一句话：%s
-                谁在用：%s
-                什么时机用：%s
-                要什么反应：%s
                 提出人昵称：%s
                 """.formatted(
                 card.getTitle(),
                 card.getSummary(),
-                orDefault(card.getTargetUser()),
-                orDefault(card.getTriggerScene()),
-                orDefault(card.getReaction()),
                 card.getNickname());
-    }
-
-    private String orDefault(String s) {
-        return s == null || s.isBlank() ? "待聊" : s;
     }
 
     /** 未读感谢卡（登录进聊天页时拉取） */

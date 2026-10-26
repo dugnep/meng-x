@@ -95,7 +95,7 @@ export default function ForgeBell({ onOpenJob }) {
             <p className="forge-panel-empty">翻查工单簿…</p>
           ) : jobs.length === 0 ? (
             <p className="forge-panel-empty">
-              还没有开工的道场。看板里已采纳的应用卡可以「开工造物线」。
+              还没有开工的道场。功能卡「确认并开工」后，造物线工单会自动建好。
             </p>
           ) : (
             jobs.map((j) => (

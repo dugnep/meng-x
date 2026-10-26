@@ -41,7 +41,7 @@ public class IdeaController {
     public record ChatRequest(Long sessionId, List<IdeaChatService.InMessage> messages,
                               String mode, Boolean greet, String clientRoundId) {}
 
-    public record UpdateStatusRequest(String status, String declineReason) {}
+    public record UpdateStatusRequest(String status) {}
 
     private final IdeaService ideaService;
     private final IdeaChatService ideaChatService;
@@ -235,18 +235,23 @@ public class IdeaController {
         return ideaService.leaderboard(userId(auth));
     }
 
-    /** 本人确认功能卡：新芽 → 已确认（§5） */
+    /** 本人确认功能卡：新芽 → 已确认（=授权开工，事务内自动创建造物线工单）（§5） */
     @PostMapping("/cards/{id}/confirm")
     public ResponseEntity<?> confirmCard(Authentication auth, @PathVariable Long id, @RequestBody Map<String, Object> body) {
         Number sessionIdNum = body == null ? null : (Number) body.get("sessionId");
         if (sessionIdNum == null) {
             return ResponseEntity.badRequest().body(Map.of("message", "sessionId 不能为空"));
         }
-        return ideaService
-                .confirmCard(userId(auth), sessionIdNum.longValue(), id)
-                .<ResponseEntity<?>>map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.status(404)
-                        .body(Map.of("message", "卡片不存在或已处理过")));
+        try {
+            return ideaService
+                    .confirmCard(userId(auth), sessionIdNum.longValue(), id)
+                    .<ResponseEntity<?>>map(ResponseEntity::ok)
+                    .orElseGet(() -> ResponseEntity.status(404)
+                            .body(Map.of("message", "卡片不存在或已处理过")));
+        } catch (IllegalStateException e) {
+            // 工单创建失败（如重复开工）：事务已回滚，卡片仍是新芽
+            return ResponseEntity.status(409).body(Map.of("message", e.getMessage()));
+        }
     }
 
     /** 本人丢弃功能卡（不要这个） */
@@ -258,7 +263,7 @@ public class IdeaController {
                 : ResponseEntity.status(404).body(Map.of("message", "卡片不存在"));
     }
 
-    /** 状态流转：已确认→已采纳/已谢绝，已采纳→已实现（§5 状态机） */
+    /** 状态流转：已确认→已实现（§5 状态机） */
     @PatchMapping("/cards/{id}/status")
     public ResponseEntity<?> updateCardStatus(
             Authentication auth, @PathVariable Long id, @RequestBody UpdateStatusRequest req) {
@@ -266,18 +271,18 @@ public class IdeaController {
             return ResponseEntity.badRequest().body(Map.of("message", "status 不能为空"));
         }
         return ideaService
-                .updateCardStatus(id, req.status(), req.declineReason())
+                .updateCardStatus(id, req.status())
                 .<ResponseEntity<?>>map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.status(404)
                         .body(Map.of("message", "卡片不存在或状态流转不合法")));
     }
 
-    /** PRD 车间开工：已采纳的卡一键格式化成施工 PRD（异步执行，结果看板可查） */
+    /** PRD 车间开工：已确认的卡一键格式化成施工 PRD（异步执行，结果看板可查） */
     @PostMapping("/cards/{id}/prd")
     public ResponseEntity<?> requestPrd(@PathVariable Long id) {
         return ideaService.requestPrd(id)
                 ? ResponseEntity.accepted().body(Map.of("message", "PRD 车间已开工"))
-                : ResponseEntity.status(404).body(Map.of("message", "卡片不存在或尚未采纳"));
+                : ResponseEntity.status(404).body(Map.of("message", "卡片不存在或尚未确认"));
     }
 
     /** 下载 PRD 终稿 Markdown（可直接投喂 AI 编程工具） */
@@ -292,26 +297,6 @@ public class IdeaController {
                     return ResponseEntity.ok().headers(headers).body(md.getBytes(StandardCharsets.UTF_8));
                 })
                 .orElseGet(() -> ResponseEntity.status(404).body(null));
-    }
-
-    /**
-     * 应用卡开工造物线（回路 B §9）：校验体量=应用且已采纳，建工单与造物线会话，
-     * 事务提交后异步启动首岗（需求分析师）。重复开工返回 409，卡不合规返回 404。
-     */
-    @PostMapping("/cards/{id}/build")
-    public ResponseEntity<?> startBuild(Authentication auth, @PathVariable Long id) {
-        Long uid = userId(auth);
-        Optional<UserEntity> user = authService.findById(uid);
-        if (user.isEmpty()) {
-            return ResponseEntity.status(401).body(Map.of("message", "账号不存在"));
-        }
-        ForgeService.StartResult result =
-                forgeService.startBuild(uid, user.get().getNickname(), id);
-        if (result.ok()) {
-            return ResponseEntity.ok(result);
-        }
-        return ResponseEntity.status(result.conflict() ? 409 : 404)
-                .body(Map.of("message", result.message()));
     }
 
     /** 下载施工包 Markdown（造物线 DONE 后，可直接投喂 AI 编程工具施工） */

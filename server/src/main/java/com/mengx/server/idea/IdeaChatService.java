@@ -2,6 +2,8 @@ package com.mengx.server.idea;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mengx.server.idea.agent.IdeaAgentFactory;
 import com.mengx.server.law.LawAgentService;
 import com.mengx.server.llm.LlmUsage;
@@ -31,7 +33,7 @@ import reactor.core.scheduler.Schedulers;
  * 流式作答（chunk）；回答收口即落库并立即发 done 解锁前端输入——
  * 机会观察（PROPOSE/NONE/EXIT）与功能卡装配全部移出关键路径，在旁路线程池异步执行：
  * 判定 PROPOSE 落应用提案（idea_proposals），前端经 notices 轮询展示邀请卡，用户许可后才进入发现模式；
- * 宣布定稿（话术同时含「功能卡」与「整理/炼成」，代码级检测）后异步装配功能卡，晚到靠轮询补气泡。
+ * 定稿为状态驱动（推演官 closingConfirmed：收口条件满足且客人点头）后异步装配功能卡，晚到靠轮询补气泡。
  * 发现模式改为同步共创：用户发言当轮由共创推演官推演（普通轮约十余秒、纯确认轮数秒），
  * 快照当轮落库并随 design 事件当轮下发（营造图面板当轮点亮），结论经 briefing 注入主对话代理。
  */
@@ -192,9 +194,7 @@ public class IdeaChatService {
     private static String statusLabel(String status) {
         return switch (status) {
             case IdeaCardEntity.STATUS_CONFIRMED -> "已确认";
-            case IdeaCardEntity.STATUS_ACCEPTED -> "已采纳";
             case IdeaCardEntity.STATUS_IMPLEMENTED -> "已实现";
-            case IdeaCardEntity.STATUS_DECLINED -> "已谢绝";
             default -> "新芽";
         };
     }
@@ -383,7 +383,7 @@ public class IdeaChatService {
     private static final String DISCOVERY_STYLE = """
 
 
-            【共创访谈环节】当前处于共创访谈环节，本环节彻底切换为专业顾问风格：不用"老朽"自称（直接说"我"或不自称）、不用古文雅字、不提仙侠修行意象；直接、清晰、专业，每句话都要推进认识。职责边界：接住客人本轮发言；转述设计简报中的建议问法与建议方案（用自己的口吻，不是逐字念）；需要澄清时可以就当前维度追问细节；客人确认某一维后，先用一句话收格确认（"已记下"），随即在同一句回复里抛出下一维度的问题——确认与推进必须在同一轮完成。不许自己开拓新维度（议程归推演）、不许替客人设计方案（建议方案归推演）、不许大段复述规格书原文。""";
+            【共创访谈环节】当前处于共创访谈环节，本环节彻底切换为专业顾问风格：不用"老朽"自称（直接说"我"或不自称）、不用古文雅字、不提仙侠修行意象；直接、清晰、专业，每句话都要推进认识。职责边界：接住客人本轮发言；转述设计简报中的建议问法与建议方案（用自己的口吻，不是逐字念）；简报给了选项就把选项自然说给客人挑，客人也可以不选、自己说；简报判定客人某个新要求不合理时，如实转述判定、原因与替代方案，请客人表态，不替他决定；需要澄清时可以就当前焦点追问细节；客人确认某一处后，先用一句话收格确认（"已记下"），随即在同一句回复里抛出下一个问题——确认与推进必须在同一轮完成。不许自己开拓新维度（议程归推演）、不许替客人设计方案（建议方案归推演）、不许大段复述规格快照原文。""";
 
     /** 流式生成：首 token 埋点、逐字 chunk、按通道收口；失败时半截回答留痕。
      * 法学通道沿用裸模型调用（messages 自带法法人设 system）；主对话通道走 HostAgent
@@ -482,10 +482,13 @@ public class IdeaChatService {
     private void finishHostTurn(FluxSink<StreamEvent> sink, IdeaSessionEntity session,
                                 List<InMessage> history, String reply, String roundId,
                                 int turnEpoch, long llmStart) {
-        final boolean announced = isAnnounced(reply);
         final boolean wasDiscovery = session.isDiscoveryActive();
-        if (wasDiscovery && announced) {
-            // 宣布定稿：退出发现模式，功能卡异步装配（card 占位消息由装配任务补插）
+        // 定稿状态驱动：本轮推演官判定 closingConfirmed（收口条件满足且客人点头）即触发装配，
+        // 不再检测主持人话术关键词——话术由简报指令约束，状态由推演官判定，两者解耦
+        final boolean closingConfirmed = wasDiscovery
+                && discoveryService.isClosingConfirmed(latestDiscoveryState(session.getId()));
+        if (closingConfirmed) {
+            // 客人点头定稿：退出发现模式，功能卡异步装配（card 占位消息由装配任务补插）
             runQuietly("发现模式状态保存", () -> {
                 session.setDiscoveryActive(false);
                 sessionRepository.save(session);
@@ -496,12 +499,12 @@ public class IdeaChatService {
         runQuietly("消息入库", () -> saveAssistantRound(session.getId(), reply, null, roundId));
         log.info("本轮收口（sessionId={}，回复 {} 字，{}，流式生成总耗时 {}ms）", session.getId(),
                 reply.length(),
-                wasDiscovery ? (announced ? "宣布定稿，异步装配功能卡" : "发现模式继续") : "常规对答",
+                wasDiscovery ? (closingConfirmed ? "客人点头定稿，异步装配功能卡" : "发现模式继续") : "常规对答",
                 System.currentTimeMillis() - llmStart);
         sink.next(new StreamEvent(StreamEvent.DONE, null));
         sink.complete();
-        // 旁路机会观察：宣布定稿的收口轮不观察（本轮访谈已闭环，无新提案时机）
-        if (!wasDiscovery || !announced) {
+        // 旁路机会观察：定稿收口轮不观察（本轮访谈已闭环，无新提案时机）
+        if (!closingConfirmed) {
             proposalService.observeAsync(session, history, reply, turnEpoch);
         }
     }
@@ -531,13 +534,7 @@ public class IdeaChatService {
         return list.isEmpty() ? null : list.get(list.size() - 1).getContent();
     }
 
-    /** 宣布检测（代码级）：主对话代理固定话术同时含「功能卡」与「整理/炼成」即视为已宣布定稿 */
-    static boolean isAnnounced(String hostReply) {
-        return hostReply != null && hostReply.contains("功能卡")
-                && (hostReply.contains("整理") || hostReply.contains("炼成"));
-    }
-
-    /** 异步装配功能卡：宣布定稿后在装配池执行（不阻塞 done 收口），迟到卡片靠轮询补发 */
+    /** 异步装配功能卡：客人点头定稿后在装配池执行（不阻塞 done 收口），迟到卡片靠轮询补发 */
     private void composeCardAsync(IdeaSessionEntity session, List<InMessage> history,
                                   String hostReply, FluxSink<StreamEvent> sink) {
         Long sessionId = session.getId();
@@ -562,7 +559,7 @@ public class IdeaChatService {
             String state = latestDiscoveryState(sessionId);
             String briefing = (state == null || state.isBlank())
                     ? "（本场无设计简报）" : discoveryService.renderForHost(state);
-            String priority = state == null ? null : discoveryService.planPriorityOf(state);
+            String priority = state == null ? null : discoveryService.priorityOf(state);
             String dialog = buildDiscoveryContext(history, hostReply);
             LlmUsage.set("extractor"); // 用量观测：装配器场景（沿用提炼器口径）
             try {
@@ -597,6 +594,7 @@ public class IdeaChatService {
                     if (card == null) {
                         return; // 业务闸门拒绝（标题空/卡数上限）：不重试
                     }
+                    card.bindProposal(proposalService.acceptedProposalId(sessionId));
                     IdeaCardEntity saved = cardRepository.save(card);
                     messageRepository.save(new IdeaMessageEntity(
                             sessionId, ROLE_CARD, String.valueOf(saved.getId())));
@@ -659,19 +657,18 @@ public class IdeaChatService {
                     nickname,
                     title,
                     summary.isEmpty() ? "待聊" : truncate(summary, 500),
-                    field(node, "targetUser"),
-                    field(node, "triggerScene"),
-                    field(node, "reaction"),
-                    field(node, "fallback"),
                     clamp(node.path("creativity").asInt(3)));
-            // 双层卡：方案卷轴（设计简报沉淀的应用规格）+ 优先级随主卡一并携带
-            JsonNode design = node.path("design");
-            String designJson = design.isObject() && design.size() > 0
-                    ? objectMapper.writeValueAsString(design) : null;
-            card.applyDesign(
-                    truncate(node.path("scale").asText("应用"), 10),
-                    truncate(node.path("priority").asText("中"), 10),
-                    designJson);
+            // 设计沉淀（核心三要素 + 动态维度 + 边界兜底 + 关键项留痕）整体存 designJson
+            ObjectNode design = objectMapper.createObjectNode();
+            design.set("functions", textArray(node.path("functions")));
+            design.put("effects", designField(node, "effects"));
+            design.put("approach", designField(node, "approach"));
+            design.set("dimensions", passThroughArray(node.path("dimensions")));
+            design.put("constraints", designField(node, "constraints"));
+            design.put("feasibilityNotes", node.path("feasibilityNotes").asText("").trim());
+            design.set("keyItems", passThroughArray(node.path("keyItems")));
+            card.applyDesign(truncate(node.path("priority").asText("中"), 10),
+                    objectMapper.writeValueAsString(design));
             return card;
         } catch (Exception e) {
             // JSON 结构非法：交回 composeCard 退避重试（title 空/卡上限属业务判定，已在上方正常返回 null）
@@ -810,9 +807,42 @@ public class IdeaChatService {
         messageRepository.saveAll(round);
     }
 
-    private static String field(JsonNode node, String name) {
+    /** 装配器输出的字符串数组字段归一（模型偶发输出成单字符串），空值填「待聊」占位 */
+    private ArrayNode textArray(JsonNode node) {
+        ArrayNode arr = objectMapper.createArrayNode();
+        if (node.isArray()) {
+            node.forEach(item -> {
+                String v = item.asText("").trim();
+                if (!v.isEmpty()) {
+                    arr.add(truncate(v, 300));
+                }
+            });
+        } else if (!node.isMissingNode() && !node.asText("").trim().isEmpty()) {
+            arr.add(truncate(node.asText("").trim(), 300));
+        }
+        if (arr.isEmpty()) {
+            arr.add("待聊");
+        }
+        return arr;
+    }
+
+    /** 装配器输出的设计字段文本（空值填「待聊」） */
+    private static String designField(JsonNode node, String name) {
         String v = node.path(name).asText("").trim();
-        return v.isEmpty() ? "待聊" : truncate(v, 200);
+        return v.isEmpty() ? "待聊" : truncate(v, 500);
+    }
+
+    /** 装配器输出的对象数组字段（dimensions/keyItems）原样透传；非数组返回空数组 */
+    private ArrayNode passThroughArray(JsonNode node) {
+        ArrayNode arr = objectMapper.createArrayNode();
+        if (node.isArray()) {
+            node.forEach(item -> {
+                if (item.isObject()) {
+                    arr.add(item);
+                }
+            });
+        }
+        return arr;
     }
 
     private static int clamp(int value) {

@@ -73,7 +73,11 @@ async function consumeSse(resp, onEvent) {
  * mode：host=仙官本色 / law=法学助手（消息级路由）
  * greet：true=法学助手出场触发（无用户消息，由后端注入触发指令，开场白不落 user 行）
  * clientRoundId：一轮对话的幂等键，同键重发后端只落库一次（greet 出场不传）
- * 事件 {type, content}：thinking 掐指一算中 | design 营造图 JSON | chunk 增量文本 | card 功能卡 DTO JSON | done 结束 | error 失败
+ * 事件 {type, content}：thinking 掐指一算中 | chunk 增量文本 | card 功能卡 DTO JSON | done 结束 | error 失败
+ *   | design 营造图 JSON（content 为 JSON 字符串：focus 本轮聚焦 / question 建议问题 / options 建议选项 /
+ *     proposal 建议方案 / validity 合理性判定 / decisions 待表态项 / closing / closingConfirmed / ack /
+ *     priority / snapshot{core{functions,effects,approach}, dimensions[]} / keyItems[]；
+ *     历史恢复走 GET /api/idea/sessions/{id}/design，返回 {design:"<同样的 JSON 字符串>"}）
  * 注意：宣布定稿后卡片经旁路异步装配，card 事件可能晚于 done 到达（流已关则静默丢弃），
  * 前端由 Chat 页的 notices 轮询按 id 去重补收到场
  */

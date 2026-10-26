@@ -39,7 +39,7 @@ export default function PrdModal({ card, onClose }) {
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal prd-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{card.scale === '应用' ? '应用蓝图' : 'PRD 车间'} · {card.title}</h3>
+        <h3>PRD 车间 · {card.title}</h3>
         {prd ? (
           <pre className="prd-md">{prd}</pre>
         ) : (

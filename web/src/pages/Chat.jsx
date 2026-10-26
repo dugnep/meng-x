@@ -17,28 +17,17 @@ const AssistantText = memo(function AssistantText({ text }) {
   );
 });
 
-/** 应用级点子的九格设计稿（营造图）：key 与后端 AgentSpec 字段对齐 */
-const APP_GRIDS = [
-  ['positioning', '定位'],
-  ['persona', '分身'],
-  ['entry', '出场'],
-  ['capabilities', '能力'],
-  ['agents', '当值'],
-  ['tools', '数据工具'],
-  ['flow', '流程'],
-  ['boundaries', '边界'],
-  ['phases', '分期'],
-  ['acceptance', '验收'],
-];
+/** keyItems 类型 → 标签样式类（诉求/疑问/问题） */
+const KEYITEM_TAG = { 诉求: 'ask', 疑问: 'q', 问题: 'issue' };
 
-/** 功能级点子的设计共识（营造图） */
-const FEATURE_GRIDS = [
-  ['approach', '实现要点'],
-  ['boundary', '边界处理'],
-  ['acceptance', '验收标准'],
-];
+/** 值为「待聊」= 还没聊到（渲染置灰）；空串同义 */
+const isPendingText = (text) => text === '' || text === '待聊' || text === '（待聊）';
 
-/** 推演存档 JSON → 营造图面板模型；旧版纯文本存档解析失败返回 null（不展示面板） */
+/**
+ * 推演存档 JSON → 营造图面板模型（新契约：核心三要素 + 动态维度 + 待处理项）；
+ * 解析失败返回 null（不展示面板）。字段容错：validity/options/decisions/keyItems 可能缺失。
+ * texts 为各格子文本快照，供 prevDesignTexts diff 出「本轮新更新」标记。
+ */
 function toDesignModel(raw, prevTexts) {
   let data;
   try {
@@ -46,36 +35,53 @@ function toDesignModel(raw, prevTexts) {
   } catch {
     return null;
   }
-  const craft = data?.craft;
-  const isApp = craft?.spec && Object.keys(craft.spec).length > 0;
-  const source = isApp ? craft.spec : craft || {};
+  if (!data || typeof data !== 'object') return null;
+  const snap = data.snapshot || {};
+  const core = snap.core || {};
   const texts = {};
-  const cells = (isApp ? APP_GRIDS : FEATURE_GRIDS).map(([key, label]) => {
-    const val = source[key];
-    const text = Array.isArray(val) ? val.filter(Boolean).join('；') : val || '';
+
+  const makeCell = (key, label, val) => {
+    const items = Array.isArray(val) ? val.filter((v) => typeof v === 'string' && v.trim()) : null;
+    const text = items ? items.join('；') : (typeof val === 'string' ? val.trim() : '');
     texts[key] = text;
-    const pending = text === '' || text === '待聊' || text === '（待聊）';
+    const pending = isPendingText(text);
     const fresh = !pending && prevTexts && prevTexts[key] !== undefined && prevTexts[key] !== text;
-    return { key, label, text: pending ? '待聊' : text, pending, fresh };
+    return { key, label, text: pending ? '待聊' : text, items: pending ? null : items, pending, fresh };
+  };
+
+  // 顶部固定核心三要素
+  const coreCells = [
+    makeCell('functions', '功能清单', core.functions),
+    makeCell('effects', '达成判据', core.effects),
+    makeCell('approach', '实现思路', core.approach),
+  ];
+
+  // 动态维度：按 snapshot.dimensions 顺序渲染，数量不定
+  const dims = (Array.isArray(snap.dimensions) ? snap.dimensions : []).map((d, i) => {
+    const name = d?.name || `维度${i + 1}`;
+    return makeCell(`dim:${name}`, name, d?.content);
   });
-  // 自定义维度：九维之外客人临时新增的格子（同步推演当轮即下发，与九格同排展示）
-  if (isApp && Array.isArray(source.extraDimensions)) {
-    source.extraDimensions.forEach((d, i) => {
-      const key = `extra_${i}`;
-      const text = d?.content || '';
-      texts[key] = text;
-      const pending = text === '' || text === '待聊' || text === '（待聊）';
-      const fresh = !pending && prevTexts && prevTexts[key] !== undefined && prevTexts[key] !== text;
-      cells.push({
-        key,
-        label: d?.name || `维度${i + 1}`,
-        text: pending ? '待聊' : text,
-        pending,
-        fresh,
-      });
-    });
-  }
-  return { scale: isApp ? '应用' : '功能', agenda: data?.product?.agenda, cells, texts };
+
+  // 待处理区：待定态的要求（等用户表态）+ 未结的关键条目
+  const decisions = Array.isArray(data.decisions)
+    ? data.decisions.filter((d) => d && (d.target || d.alternative))
+    : [];
+  const openItems = Array.isArray(data.keyItems)
+    ? data.keyItems.filter((k) => k && k.status === 'open' && k.content)
+    : [];
+  const options = Array.isArray(data.options)
+    ? data.options.filter((o) => typeof o === 'string' && o.trim())
+    : [];
+
+  return {
+    focus: typeof data.focus === 'string' ? data.focus : '',
+    coreCells,
+    dims,
+    decisions,
+    openItems,
+    options,
+    texts,
+  };
 }
 
 /**
@@ -125,6 +131,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
   const [mode, setMode] = useState(null); // 正在回答的通道：null=仙官本色 / 'law'=法学助手（仅 typing 文案区分，无全局切换）
   const [design, setDesign] = useState(null); // 营造图面板模型（SSE design 事件 / 历史恢复），null=不展示
   const [designOpen, setDesignOpen] = useState(true);
+  const [designOptions, setDesignOptions] = useState([]); // 最新 design 事件的建议选项（输入区上方按钮排），用户发送任一消息即清空
   const [menuOpen, setMenuOpen] = useState(false); // 顶栏品牌菜单（看板/每日一签折叠在百晓通下）
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768); // 左侧场次栏：宽屏默认展开可抽拉收起，窄屏为抽屉
   const brandRef = useRef(null);
@@ -190,6 +197,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     setSession(s);
     setMessages([]);
     setDesign(null); // 新场清空营造图
+    setDesignOptions([]);
     prevDesignTexts.current = {};
     localStorage.setItem(SESSION_KEY, JSON.stringify(s));
     return s;
@@ -231,6 +239,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     const model = designRes?.design ? toDesignModel(designRes.design, {}) : null;
     prevDesignTexts.current = model ? model.texts : {};
     setDesign(model);
+    setDesignOptions(model ? model.options : []);
     setProposal(noticesRes?.proposals?.[0] || null);
     const s = { sessionId, nickname: user.nickname };
     setSession(s);
@@ -276,6 +285,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     if (!model) return;
     prevDesignTexts.current = model.texts;
     setDesign(model);
+    setDesignOptions(model.options); // 新 design 事件到达：按新 options 刷新选项按钮
   }
 
   /** SSE 事件统一分发（发送与出场共用） */
@@ -395,6 +405,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
       { role: 'user', content: text },
     ];
     setInput('');
+    setDesignOptions([]); // 用户发送任一消息即清空选项，等新 design 事件再刷新
     setSending(true);
     setMode(targetMode); // 本条消息的通道：law=请法学助手答，答完回落仙官
     setMessages((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '' }]);
@@ -481,7 +492,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     ]);
   }
 
-  /** 确认功能卡：新芽 → 已确认，盖章动效 + 百晓通继续引导 */
+  /** 确认功能卡 = 授权开工：新芽 → 已确认（后端自动建造物线工单），盖章动效 + 百晓通继续引导 */
   async function confirmCard(idx) {
     const { card } = messages[idx];
     try {
@@ -494,7 +505,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
         next[idx] = { role: 'card', card: updated, stamped: true };
         next.push({
           role: 'assistant',
-          content: `收到！「${updated.title}」已经记进点子铺啦 🎉 我们继续——下一个灵感藏在哪？`,
+          content: `收到！「${updated.title}」已确认开工，造物线这就安排上 🎉 我们继续——下一个灵感藏在哪？`,
         });
         return next;
       });
@@ -598,11 +609,11 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
             m.revising && !confirmed ? (
               <p className="fc-revise-note">在下面告诉百晓通这张卡哪里要改～</p>
             ) : confirmed ? (
-              <p className="fc-confirmed-note">✓ 已收进点子铺</p>
+              <p className="fc-confirmed-note">✓ 已确认 · 造物线已开工</p>
             ) : (
               <div className="fc-actions">
                 <button className="fc-btn-confirm" onClick={() => confirmCard(i)}>
-                  ✓ 确认这张卡
+                  ✓ 确认并开工
                 </button>
                 <button onClick={() => reviseCard(i)}>让我再改改</button>
                 <button onClick={() => discardCard(i)}>不要这个</button>
@@ -909,22 +920,52 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
           <section className="design-panel">
             <button className="design-head" onClick={() => setDesignOpen((v) => !v)}>
               <span className="design-title">营造图</span>
-              <span className="design-scale">{design.scale === '应用' ? '新道场 · 应用' : '小件 · 功能'}</span>
-              {design.agenda && <span className="design-agenda">本轮推进：{design.agenda}</span>}
+              {design.focus && <span className="design-agenda">本轮聚焦：{design.focus}</span>}
               <span className="design-toggle">{designOpen ? '收起' : '展开'}</span>
             </button>
             {designOpen && (
-              <div className="design-grid">
-                {design.cells.map((c) => (
-                  <div key={c.key} className={`design-cell${c.pending ? ' pending' : ''}${c.fresh ? ' fresh' : ''}`}>
-                    <span className="design-cell-label">
-                      {c.label}
-                      {c.fresh && <i className="design-fresh">新</i>}
-                    </span>
-                    <p className="design-cell-text">{c.text}</p>
+              <>
+                <div className="design-grid">
+                  {[...design.coreCells, ...design.dims].map((c) => (
+                    <div key={c.key} className={`design-cell${c.pending ? ' pending' : ''}${c.fresh ? ' fresh' : ''}`}>
+                      <span className="design-cell-label">
+                        {c.label}
+                        {c.fresh && <i className="design-fresh">新</i>}
+                      </span>
+                      {c.items ? (
+                        <ul className="design-fn-list">
+                          {c.items.map((fn, j) => (
+                            <li key={j}>{fn}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="design-cell-text">{c.text}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {(design.decisions.length > 0 || design.openItems.length > 0) && (
+                  <div className="design-alerts">
+                    {design.decisions.map((d, i) => (
+                      <div key={i} className="design-decision">
+                        <span className="design-decision-tag">待你表态</span>
+                        {d.target && <p className="design-decision-target">{d.target}</p>}
+                        {d.alternative && <p className="design-decision-alt">替代方案：{d.alternative}</p>}
+                      </div>
+                    ))}
+                    {design.openItems.length > 0 && (
+                      <ul className="design-keyitems">
+                        {design.openItems.map((k, i) => (
+                          <li key={i} className="design-keyitem">
+                            <span className={`ki-tag ki-${KEYITEM_TAG[k.type] || 'ask'}`}>{k.type || '条目'}</span>
+                            <span className="ki-text">{k.content}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             )}
           </section>
         )}
@@ -947,6 +988,23 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
             <span className="law-hint-text">谈股论道</span>
           </div>
         </div>
+
+        {/* 本轮建议选项：点击即以该选项文本走正常发送路径（与输入框发送同一条路径） */}
+        {designOptions.length > 0 && (
+          <div className="composer-options">
+            {designOptions.map((op) => (
+              <button
+                key={op}
+                type="button"
+                className="forge-option-btn"
+                disabled={sending}
+                onClick={() => sendVia(null, op)}
+              >
+                {op}
+              </button>
+            ))}
+          </div>
+        )}
 
         <form className="composer" onSubmit={handleSend}>
           <textarea

@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * 机会观察链路的确定性解析单测（零依赖）：覆盖观察器输出解析（围栏剥离/三态判定/
- * PROPOSE 证据闸门）与主对话代理宣布检测（炼卡触发判定的代码级锚点）。
+ * PROPOSE 证据闸门）。
  */
 class IdeaProposalParseTest {
 
@@ -96,32 +96,5 @@ class IdeaProposalParseTest {
     @Test
     void 解析_null输入判无效() {
         assertNull(IdeaProposalService.parseObservation(null));
-    }
-
-    // ==================== isAnnounced（宣布检测） ====================
-
-    @Test
-    void 宣布检测_功能卡加整理() {
-        assertTrue(IdeaChatService.isAnnounced("好嘞，我把这个想法整理成一张功能卡啦。"));
-    }
-
-    @Test
-    void 宣布检测_功能卡加炼成() {
-        assertTrue(IdeaChatService.isAnnounced("这一点子已经炼成功能卡，收进铺子。"));
-    }
-
-    @Test
-    void 宣布检测_只有功能卡不算宣布() {
-        assertFalse(IdeaChatService.isAnnounced("咱们回头可以把它做成一张功能卡。"));
-    }
-
-    @Test
-    void 宣布检测_只有整理不算宣布() {
-        assertFalse(IdeaChatService.isAnnounced("我把要点整理一下，你再看看。"));
-    }
-
-    @Test
-    void 宣布检测_null不算宣布() {
-        assertFalse(IdeaChatService.isAnnounced(null));
     }
 }

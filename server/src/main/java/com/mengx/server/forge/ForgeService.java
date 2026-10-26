@@ -17,12 +17,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 造物线业务（方案 §9 接口）：开工（建工单 + 冻结九格快照 + FORGE 会话 + 提交首岗）、
+ * 造物线业务（方案 §9 接口）：开工（建工单 + 冻结营造图快照 + FORGE 会话 + 提交首岗）、
  * 在制工单列表、工单详情。鉴权复用现有 JWT（SecurityConfig anyRequest 默认覆盖 /api/forge/**）。
  * 权限口径 v1 不设角色：看板可见即可操作（信任圈产品，§5.5）。
+ * 开工入口：功能卡「确认」即授权开工，由 IdeaService.confirmCard 在事务内调用 startBuild。
  */
 @Service
 public class ForgeService {
@@ -32,8 +35,8 @@ public class ForgeService {
     private static final DateTimeFormatter TIME_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
-    /** 无营造图快照的兜底信封（老卡/缺卷轴）：分析师按四要素深化 */
-    private static final String EMPTY_SNAPSHOT = "{\"note\":\"无营造图快照，请以功能卡四要素为基准深化\"}";
+    /** 无营造图快照的兜底信封（缺设计沉淀）：分析师按卡片标题与一句话深化 */
+    private static final String EMPTY_SNAPSHOT = "{\"note\":\"无营造图快照，请以功能卡标题与一句话说明为基准深化\"}";
 
     /** 终审打回合法目标岗（advisor 为槽位名，执行时经注册表重新选型） */
     private static final Set<String> REJECT_TARGETS = Set.of("analyst", "advisor", "architect", "reviewer");
@@ -84,52 +87,52 @@ public class ForgeService {
                             List<String> openQuestions, Object domainDesign, Object engineering) {}
 
     /**
-     * 开工（§9 POST /api/idea/cards/{id}/build）：校验 scale=应用 且 ACCEPTED；一卡一单查重；
-     * 冻结九格快照；建 FORGE 会话；卡片镜像 RUNNING；事务提交后提交首岗 analyst（岗内重读工单）。
+     * 开工（功能卡确认时由 IdeaService.confirmCard 在事务内调用）：校验已确认；一卡一单查重；
+     * 冻结营造图快照；建 FORGE 会话；卡片镜像 RUNNING；事务提交后提交首岗 analyst（岗内重读工单）。
+     * 首岗提交挂 afterCommit 钩子：本方法可能嵌套在 confirmCard 的外层事务里，
+     * 若在 tx.execute 返回后直接提交，岗线程会读到外层尚未提交的工单行。
      */
     public StartResult startBuild(Long userId, String nickname, Long cardId) {
-        Outcome outcome = tx.execute(status -> {
+        StartResult result = tx.execute(status -> {
             IdeaCardEntity card = cardRepository.findById(cardId).orElse(null);
             if (card == null) {
-                return new Outcome(new StartResult(false, false, "卡片不存在", null, null), null);
+                return new StartResult(false, false, "卡片不存在", null, null);
             }
-            if (!IdeaCardEntity.SCALE_APP.equals(card.getScale())
-                    || !IdeaCardEntity.STATUS_ACCEPTED.equals(card.getStatus())) {
-                return new Outcome(new StartResult(false, false,
-                        "只有已采纳的应用卡才能开工造物线", null, null), null);
+            if (!IdeaCardEntity.STATUS_CONFIRMED.equals(card.getStatus())) {
+                return new StartResult(false, false, "只有已确认的功能卡才能开工造物线", null, null);
             }
             Optional<ForgeJobEntity> existing = jobRepository.findByCardId(cardId);
             if (existing.isPresent()) {
                 String st = existing.get().getStatus();
-                return new Outcome(new StartResult(false, true,
-                        "这张卡已有工单（状态 " + st + "），不能重复开工", existing.get().getId(), null), null);
+                return new StartResult(false, true,
+                        "这张卡已有工单（状态 " + st + "），不能重复开工", existing.get().getId(), null);
             }
             String snapshot = card.getDesignJson() == null || card.getDesignJson().isBlank()
                     ? EMPTY_SNAPSHOT : card.getDesignJson();
             ForgeJobEntity job = new ForgeJobEntity(cardId, snapshot);
             job.markStatus(ForgeJobEntity.STATUS_RUNNING, "analyst", null);
-            job = jobRepository.save(job);
+            ForgeJobEntity saved = jobRepository.save(job);
             IdeaSessionEntity session = sessionRepository.save(
-                    IdeaSessionEntity.forgeOf(userId, nickname, cardId, job.getId()));
+                    IdeaSessionEntity.forgeOf(userId, nickname, cardId, saved.getId()));
             // 分身开场播报（同一事务落库）：客人进造物线即知道分身在造什么、怎么配合
             herald.postOpening(session.getId(), card.getTitle());
             card.markBuild(ForgeJobEntity.STATUS_RUNNING, null);
             cardRepository.save(card);
-            return new Outcome(
-                    new StartResult(true, false, "开工成功，需求分析师已进场", job.getId(), session.getId()), job);
+            // 事务真正提交后再提交岗任务（runStage 重读工单，不会读到未提交行）
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    executor.submitStage(saved.getId(), () -> orchestrator.runStage(saved));
+                }
+            });
+            return new StartResult(true, false, "开工成功，需求分析师已进场", saved.getId(), session.getId());
         });
-        if (outcome.result().ok()) {
-            // 事务提交后提交岗任务（runStage 重读工单，不会读到未提交行）
-            ForgeJobEntity jobRef = outcome.job();
-            executor.submitStage(outcome.result().jobId(), () -> orchestrator.runStage(jobRef));
+        if (result.ok()) {
             log.info("开工：cardId={} → 工单 {}，造物线会话 {}（用户 {}）",
-                    cardId, outcome.result().jobId(), outcome.result().sessionId(), userId);
+                    cardId, result.jobId(), result.sessionId(), userId);
         }
-        return outcome.result();
+        return result;
     }
-
-    /** 事务内部载体：开工结果 + 工单实体引用（供提交后作为断点引用传入编排器） */
-    private record Outcome(StartResult result, ForgeJobEntity job) {}
 
     /** 当前用户在制工单（§9）：归属经 card→session→userId 链路解析；在制 = 未 DONE/CANCELLED */
     public List<JobDto> listJobs(Long userId) {

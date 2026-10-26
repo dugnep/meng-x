@@ -1,11 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, getToken } from '../api';
-import FeatureCard, { STATUS_LABELS, STATUS_CLASSES } from '../components/FeatureCard';
-import ForgeBell from '../components/ForgeBell';
+import FeatureCard, { STATUS_LABELS } from '../components/FeatureCard';
 import PrdModal from '../components/PrdModal';
-
-/** 优先级徽标配色（高/中/低） */
-const PRIORITY_CLASS = { 高: 'high', 中: 'mid', 低: 'low' };
 
 /** 断点列数（单卡峰值约 400px） */
 const colsForWidth = (w) =>
@@ -127,25 +123,30 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
     }
   }
 
-  async function changeStatus(card, newStatus, declineReason) {
+  /** 标记已实现（CONFIRMED → IMPLEMENTED，终态） */
+  async function markImplemented(card) {
     try {
       await api(`/api/idea/cards/${card.id}/status`, {
         method: 'PATCH',
-        body: { status: newStatus, declineReason },
+        body: { status: 'IMPLEMENTED' },
       });
-      const p = new URLSearchParams();
-      if (status) p.set('status', status);
-      const qs = p.toString();
-      api(`/api/idea/cards${qs ? '?' + qs : ''}`).then(setCards);
+      reloadCards();
     } catch (err) {
       alert(err.message);
     }
   }
 
-  function declineCard(card) {
-    const reason = window.prompt('给朋友一句温度话（对方可见）：', '好点子先记下，排到下一批做～');
-    if (reason === null) return;
-    changeStatus(card, 'DECLINED', reason);
+  /** 确认并开工（SPROUT）：授权开工，后端自动建造物线工单 */
+  async function confirmAndBuild(card) {
+    try {
+      await api(`/api/idea/cards/${card.id}/confirm`, {
+        method: 'POST',
+        body: { sessionId: card.sessionId },
+      });
+      reloadCards();
+    } catch (err) {
+      alert(err.message);
+    }
   }
 
   /** PRD 车间开工：格式化官单次出稿（约 15~40 秒），分几轮定时刷新看结果 */
@@ -163,16 +164,6 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
       );
     } catch (err) {
       alert(err.message);
-    }
-  }
-
-  /** 开工造物线（已采纳的应用卡）：建工单后直跳造物线会话；重复开工（409）引导从顶栏铃铛进入 */
-  async function startForge(c) {
-    try {
-      const r = await api(`/api/idea/cards/${c.id}/build`, { method: 'POST' });
-      onOpenForge(r.jobId);
-    } catch (err) {
-      alert(err.message?.includes('已有工单') ? `${err.message}，可从顶栏铃铛进入。` : err.message);
     }
   }
 
@@ -284,16 +275,6 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
               key={c.id}
               card={c}
               onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
-              badge={
-                <>
-                  <span className={`fc-badge ${STATUS_CLASSES[c.status]}`}>{STATUS_LABELS[c.status]}</span>
-                  {c.priority && (
-                    <span className={`fc-badge prio-${PRIORITY_CLASS[c.priority] || 'mid'}`}>
-                      优先级{c.priority}
-                    </span>
-                  )}
-                </>
-              }
               footer={
                 <div className="fc-footer">
                   <span className="fc-source">
@@ -307,31 +288,18 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
                     >
                       ❤ {c.likeCount}
                     </button>
+                    {c.status === 'SPROUT' && (
+                      <button className="fc-btn-confirm" onClick={() => confirmAndBuild(c)}>
+                        确认并开工
+                      </button>
+                    )}
                     {c.status === 'CONFIRMED' && (
                       <>
-                        <button onClick={() => changeStatus(c, 'ACCEPTED')}>采纳</button>
-                        <button onClick={() => declineCard(c)}>谢绝</button>
-                      </>
-                    )}
-                    {c.status === 'ACCEPTED' && (
-                      <>
-                        <button onClick={() => changeStatus(c, 'IMPLEMENTED')}>标为已实现</button>
-                        {c.scale === '应用' && (!c.buildStatus || c.buildStatus === 'NONE') && (
-                          <button className="fc-forge-btn" onClick={() => startForge(c)}>
-                            开工造物线
-                          </button>
-                        )}
-                        {c.scale === '应用' && c.buildStatus === 'DONE' && (
+                        <button onClick={() => markImplemented(c)}>标记已实现</button>
+                        {c.buildStatus === 'DONE' && (
                           <button className="rv-open-btn" onClick={() => downloadBuild(c)}>
                             下载施工包
                           </button>
-                        )}
-                        {c.scale === '应用' && c.buildStatus && c.buildStatus !== 'NONE'
-                          && c.buildStatus !== 'DONE' && c.buildStatus !== 'CANCELLED' && (
-                          <button disabled title="从顶栏铃铛进入造物线">营造中…</button>
-                        )}
-                        {c.scale === '应用' && c.buildStatus === 'CANCELLED' && (
-                          <button disabled title="工单已搁置谢绝">已搁置</button>
                         )}
                         {c.prdStatus === 'DONE' && (
                           <button className="rv-open-btn" onClick={() => setPrdCard(c)}>
@@ -345,9 +313,6 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
                           </button>
                         )}
                       </>
-                    )}
-                    {c.status === 'DECLINED' && c.declineReason && (
-                      <span className="fc-reason">「{c.declineReason}」</span>
                     )}
                   </div>
                 </div>
@@ -378,7 +343,6 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
               key={c.id}
               card={c}
               onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
-              badge={<span className="fc-badge implemented">已实现</span>}
               footer={
                 <div className="fc-footer">
                   <span className="fc-source wall-source">
@@ -409,7 +373,6 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
               key={c.id}
               card={c}
               onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
-              badge={<span className={`fc-badge ${STATUS_CLASSES[c.status]}`}>{STATUS_LABELS[c.status]}</span>}
               footer={
                 <div className="fc-footer">
                   <span className="fc-source">
@@ -440,12 +403,7 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
               key={c.id}
               card={c}
               onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
-              badge={
-                <>
-                  <span className={`rank-no rank-${i + 1}`}>第{i + 1}名</span>
-                  <span className={`fc-badge ${STATUS_CLASSES[c.status]}`}>{STATUS_LABELS[c.status]}</span>
-                </>
-              }
+              badge={<span className={`rank-no rank-${i + 1}`}>第{i + 1}名</span>}
               footer={
                 <div className="fc-footer">
                   <span className="fc-source">

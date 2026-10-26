@@ -856,19 +856,9 @@
   color: #3d9a50;
 }
 
-.fc-badge.accepted {
-  background: rgba(0, 0, 0, 0.05);
-  color: #8a8a90;
-}
-
 .fc-badge.implemented {
   background: rgba(61, 154, 80, 0.12);
   color: #3d9a50;
-}
-
-.fc-badge.declined {
-  background: rgba(0, 0, 0, 0.06);
-  color: #9a9aa0;
 }
 
 .fc-badge.prio-high {
@@ -886,20 +876,7 @@
   color: #9a9aa0;
 }
 
-/* 应用卡角标（体量=应用的复合大点子） */
-.fc-app-tag {
-  display: inline-block;
-  font-size: 11px;
-  color: #1d1d1f;
-  background: rgba(0, 0, 0, 0.06);
-  border-radius: 999px;
-  padding: 1px 8px;
-  margin-right: 8px;
-  vertical-align: 2px;
-  letter-spacing: 1px;
-}
-
-/* 方案卷轴（双层卡下层，折叠展开） */
+/* 设计详情（双层卡下层，折叠展开） */
 .fc-scroll {
   margin-top: 6px;
 }
@@ -934,6 +911,84 @@
   font-size: 14px;
   color: #8a8a90;
   line-height: 1.6;
+}
+
+/* 核心三要素（功能清单 / 达成判据 / 实现思路） */
+.fc-core {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.fc-core-label {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: #6e6e73;
+}
+
+.fc-fn-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #8a8a90;
+  word-break: break-word;
+}
+
+.fc-core-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #8a8a90;
+  word-break: break-word;
+}
+
+/* 关键条目（折叠，带类型/状态标签，待定项高亮） */
+.fc-keyitems {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.fc-keyitem {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fc-keyitem.open {
+  border-color: rgba(213, 69, 90, 0.35);
+  border-style: dashed;
+  background: rgba(213, 69, 90, 0.05);
+}
+
+.fc-ki-body {
+  color: #8a8a90;
+  word-break: break-word;
+}
+
+.fc-keyitem.open .fc-ki-body {
+  color: #1d1d1f;
+}
+
+.fc-ki-status {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 11px;
+  color: #d5455a;
+}
+
+.fc-ki-status.resolved {
+  color: #3d9a50;
 }
 
 .fc-fields {
@@ -1027,7 +1082,8 @@
   flex-wrap: wrap;
 }
 
-.fc-actions .fc-btn-confirm {
+.fc-actions .fc-btn-confirm,
+.fc-ops .fc-btn-confirm {
   background: #1d1d1f;
   color: #fff;
   border: none;
@@ -1888,16 +1944,6 @@
   color: #1d1d1f;
 }
 
-.design-scale {
-  flex-shrink: 0;
-  padding: 2px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 0, 0, 0.15);
-  background: rgba(0, 0, 0, 0.05);
-  font-size: 11px;
-  color: #1d1d1f;
-}
-
 .design-agenda {
   flex: 1;
   min-width: 0;
@@ -1970,6 +2016,113 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
   overflow: hidden;
+}
+
+/* 核心三要素之功能清单（列表渲染） */
+.design-fn-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a8a90;
+  word-break: break-word;
+}
+
+.design-fn-list li + li {
+  margin-top: 2px;
+}
+
+/* 待处理区：待定要求高亮（等你表态）+ 未结关键条目 */
+.design-alerts {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.design-decision {
+  padding: 8px 10px;
+  border: 1px solid rgba(213, 69, 90, 0.35);
+  border-radius: 10px;
+  background: rgba(213, 69, 90, 0.05);
+}
+
+.design-decision-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  margin-bottom: 4px;
+  border-radius: 999px;
+  background: #d5455a;
+  color: #fff;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.design-decision-target {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #1d1d1f;
+  word-break: break-word;
+}
+
+.design-decision-alt {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6e6e73;
+  word-break: break-word;
+}
+
+.design-keyitems {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.design-keyitem {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6e6e73;
+}
+
+.ki-text {
+  word-break: break-word;
+}
+
+/* keyItems 类型标签（诉求/疑问/问题，营造图与功能卡共用） */
+.ki-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: rgba(0, 0, 0, 0.03);
+  font-size: 10px;
+  color: #6e6e73;
+}
+
+.ki-tag.ki-q {
+  border-color: rgba(61, 154, 80, 0.4);
+  background: rgba(61, 154, 80, 0.08);
+  color: #3d9a50;
+}
+
+.ki-tag.ki-issue {
+  border-color: rgba(213, 69, 90, 0.4);
+  background: rgba(213, 69, 90, 0.06);
+  color: #d5455a;
+}
+
+/* 营造图选项按钮排（输入区上方，按钮复用造物线挂起问题选项样式） */
+.composer-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
 }
 
 /* ---------- 手机端自适应（微信内打开为主场景） ---------- */
@@ -2125,6 +2278,10 @@
   }
   .design-cell-text {
     -webkit-line-clamp: 3;
+  }
+  .design-alerts {
+    gap: 6px;
+    padding: 0 10px 10px;
   }
 }
 
@@ -2355,16 +2512,6 @@
   cursor: default;
 }
 
-/* 看板「开工造物线」按钮：与 PRD 按钮同排，深底突出 */
-.fc-forge-btn {
-  background: #1d1d1f;
-  color: #fff;
-  border: none;
-}
-
-.fc-forge-btn:hover {
-  background: #333336;
-}
 
 /* ===== 造物线终审面板（REVIEW 三动作）与操作行（下载/重试） ===== */
 
@@ -2547,6 +2694,9 @@
 }
 
 /* ===== 助手消息 Markdown 渲染（分析档：标题/加粗/列表/表格） ===== */
+/* 重置 .bubble 继承来的 pre-wrap：react-markdown 在块级元素间保留换行空白文本节点，
+   pre-wrap 会把它们渲染成可见空行，导致列表/段落间距异常放大 */
+.md-body { white-space: normal; }
 .md-body > *:first-child { margin-top: 0; }
 .md-body > *:last-child { margin-bottom: 0; }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 {
