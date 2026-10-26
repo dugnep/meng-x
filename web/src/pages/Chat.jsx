@@ -195,7 +195,8 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     setProposal(null);
     const s = await api('/api/idea/sessions', { method: 'POST' });
     setSession(s);
-    setMessages([]);
+    // 新场开场白随创建落库并随响应带回：仙君直接亮相（解答世间万物 + 共创涨修为），无需再发 greet 请求
+    setMessages(s.greeting ? [{ role: 'assistant', content: s.greeting }] : []);
     setDesign(null); // 新场清空营造图
     setDesignOptions([]);
     prevDesignTexts.current = {};

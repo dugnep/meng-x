@@ -46,9 +46,19 @@ public class IdeaSessionEntity {
     /**
      * 人设模式（同一主对话代理的换挡，不分裂会话）：host=本色陪聊（默认）/ law=法学模式。
      * 通道裁决结果随消息落会话；法学问答不触发规格定稿链路。
+     * 即当前活跃帧（active frame）。
      */
     @Column(nullable = false, length = 16)
     private String mode = "host";
+
+    /**
+     * 会话帧栈（JSON 数组）：按挂起顺序排列的已休眠通道名，栈首为最近挂起的帧。
+     * 切换通道时旧帧挂起压栈；切回已有帧时从栈中移除并设为活跃。
+     * 配合 idea_messages.producer_channel 实现分帧隔离，每帧历史独立，切回即恢复。
+     * 最多保留 {@link com.mengx.server.idea.orchestrator.FrameStackManager#MAX_FRAMES} 个挂起帧。
+     */
+    @Column(name = "frame_stack", columnDefinition = "text")
+    private String frameStack;
 
     /**
      * 会话种类：MAIN=主会话 / FORGE=造物线会话（身外身）。
@@ -111,6 +121,14 @@ public class IdeaSessionEntity {
 
     public void setMode(String mode) {
         this.mode = mode;
+    }
+
+    public String getFrameStack() {
+        return frameStack;
+    }
+
+    public void setFrameStack(String frameStack) {
+        this.frameStack = frameStack;
     }
 
     public String getKind() {

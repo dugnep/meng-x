@@ -79,7 +79,7 @@ public class ForgeChatService {
         }
         String content = req.content().trim();
         // 用户消息先落库（先落盘后交棒，§7.5）：无论走哪个分支，客人说的话都在消息流里
-        messageRepository.save(new IdeaMessageEntity(session.getId(), "user", content));
+        messageRepository.save(new IdeaMessageEntity(session.getId(), "user", content, "forge", null));
 
         String status = job.getStatus();
         if (ForgeJobEntity.STATUS_WAITING_USER.equals(status)) {

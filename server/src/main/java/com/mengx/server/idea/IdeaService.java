@@ -3,6 +3,7 @@ package com.mengx.server.idea;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mengx.server.forge.ForgeService;
+import com.mengx.server.routing.ChannelRegistry;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -70,9 +71,24 @@ public class IdeaService {
 
     // ---------- 会话 ----------
 
-    /** 开一场新访谈（"新开一场"） */
+    /** 新场开场白模板：仙君亮相——世间万物皆可问，共创点子炼功能卡、涨修为 */
+    private static final String OPENING_TEMPLATE =
+            "老朽百晓仙君，恭候「%s」多时。天地之间没有什么问不得的——天文地理、律法经义、人情世故，"
+                    + "世间万物，老朽都接得住。阁下若心里揣着点子，也尽管道来，"
+                    + "你我共创推演一番，把它炼成一张功能卡——好点子最养修为，你我皆更上一层楼。";
+
+    /** 开一场新访谈（"新开一场"）：随会话落开场白（assistant 行、host 通道），刷新/换设备不丢 */
     public IdeaSessionEntity createSession(Long userId, String nickname) {
-        return sessionRepository.save(new IdeaSessionEntity(userId, nickname));
+        IdeaSessionEntity session = sessionRepository.save(new IdeaSessionEntity(userId, nickname));
+        messageRepository.save(new IdeaMessageEntity(session.getId(), "assistant",
+                openingGreeting(nickname), ChannelRegistry.DEFAULT_CHANNEL, null));
+        return session;
+    }
+
+    /** 开场白文案（createSession 落库同款，供创建响应带回前端直接上屏） */
+    public String openingGreeting(String nickname) {
+        String guest = (nickname == null || nickname.isBlank()) ? "阁下" : nickname;
+        return OPENING_TEMPLATE.formatted(guest);
     }
 
     /** 校验会话属于当前用户（聊天/确认/丢弃的归属校验） */

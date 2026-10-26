@@ -118,7 +118,7 @@ public class DiscoveryService {
     /** 状态存档落库（失败只告警，不影响本轮回复）；role 固定 counsel */
     public void archive(Long sessionId, String stored) {
         try {
-            messageRepository.save(new IdeaMessageEntity(sessionId, "counsel", stored));
+            messageRepository.save(new IdeaMessageEntity(sessionId, "counsel", stored, "host", null));
         } catch (Exception e) {
             log.warn("设计简报存档失败（不影响本轮回复）：{}", e.getMessage());
         }

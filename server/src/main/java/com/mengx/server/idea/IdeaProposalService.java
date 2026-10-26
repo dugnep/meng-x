@@ -279,7 +279,7 @@ public class IdeaProposalService {
     }
 
     /** 剥 markdown 围栏（```json … ```）：模型偶尔裹输出，不剥会误判为无法识别 */
-    static String stripFences(String text) {
+    public static String stripFences(String text) {
         if (text.startsWith("```")) {
             int firstBreak = text.indexOf('\n');
             int closing = text.lastIndexOf("```");
@@ -321,7 +321,7 @@ public class IdeaProposalService {
                 session.setDiscoveryActive(true);
                 sessionRepository.save(session);
             }
-            messageRepository.save(new IdeaMessageEntity(session.getId(), "assistant", ACCEPT_OPENING));
+            messageRepository.save(new IdeaMessageEntity(session.getId(), "assistant", ACCEPT_OPENING, "host", null));
         }
         log.info("应用提案已许可开班（sessionId={}，proposalId={}）",
                 proposal.getSessionId(), proposalId);
@@ -421,7 +421,7 @@ public class IdeaProposalService {
     }
 
     /** 已实装能力清单：路由注册表各通道职责 + 基础服务（观察器 Q1 判定输入） */
-    private String capabilityRoster() {
+    public String capabilityRoster() {
         StringBuilder sb = new StringBuilder(
                 "- 主对话代理（默认通道）：日常问答与闲聊、创意访谈与功能卡流转\n");
         for (ChannelSpec spec : channelRegistry.all()) {
@@ -436,7 +436,7 @@ public class IdeaProposalService {
     }
 
     /** 防重清单：本场已定稿卡片 + 全站热门卡片（标题：说明） */
-    private String knownList(Long sessionId) {
+    public String knownList(Long sessionId) {
         StringBuilder sb = new StringBuilder();
         for (IdeaCardEntity card : cardRepository.findBySessionIdOrderByIdDesc(sessionId)) {
             sb.append("《").append(card.getTitle()).append("》：")

@@ -32,7 +32,7 @@ import reactor.core.publisher.Flux;
 @RequestMapping("/api/idea")
 public class IdeaController {
 
-    public record SessionResponse(Long sessionId, String nickname) {}
+    public record SessionResponse(Long sessionId, String nickname, String greeting) {}
 
     /**
      * 一轮聊天请求。
@@ -83,7 +83,8 @@ public class IdeaController {
                 .findById(uid)
                 .<ResponseEntity<?>>map(u -> {
                     IdeaSessionEntity session = ideaService.createSession(uid, u.getNickname());
-                    return ResponseEntity.ok(new SessionResponse(session.getId(), session.getNickname()));
+                    return ResponseEntity.ok(new SessionResponse(session.getId(), session.getNickname(),
+                            ideaService.openingGreeting(u.getNickname())));
                 })
                 .orElseGet(() -> ResponseEntity.status(401).body(Map.of("message", "账号不存在")));
     }

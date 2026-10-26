@@ -81,41 +81,69 @@ public class LawQuizFlowService {
                                List<LawQuestionGenService.QuizQuestion> unanswered) {}
 
     /**
-     * 法学域子意图总入口：出题/重发、交卷、学情汇报任一命中即完成整轮返回 true；
-     * 都不是返回 false，调用方走正常法学问答。
-     * <p>关流契约（强约束）：返回 true 表示本方法已接管整轮，实现方必须保证最终发出
+     * 法学域子意图总入口：出题/重发、交卷、学情汇报任一命中即完成整轮，返回落库文本；
+     * 都不是返回 null，调用方走正常法学问答。
+     * <p>关流契约（强约束）：返回非 null 表示本方法已接管整轮，实现方必须保证最终发出
      * done 或 error 事件并调用 sink.complete()，否则前端会永久挂起等待；
-     * 返回 false 时不得触碰 sink。新增分支务必沿用该契约。
+     * 返回 null 时不得触碰 sink。新增分支务必沿用该契约。
+     * <p>落库契约：返回文本即 assistant 落库内容——user 轮与 assistant 轮统一由编排器
+     * 收口落库（顺序与幂等键由编排器保证），本类只落 question 信封等结构性行，不再写对话轮。
      */
-    public boolean handle(FluxSink<IdeaChatService.StreamEvent> sink,
+    public String handle(FluxSink<IdeaChatService.StreamEvent> sink,
             IdeaSessionEntity session, List<IdeaChatService.InMessage> history) {
         String latest = latestUserText(history);
         if (latest.isBlank()) {
-            return false;
+            return null;
         }
         PendingQuiz pending = pendingQuiz(session);
         if (isSubjectiveTrigger(latest)) {
             // 主观意图先于客观触发词判定（「考我一道案例分析」含「考我」，应出主观而非客观组）
             if (pending != null && !pending.unanswered().isEmpty()) {
-                resendQuiz(sink, session, history, pending);
-            } else {
-                newSubjectiveQuiz(sink, session, history, latest, pending);
+                return resendQuiz(sink, session, pending);
             }
-            return true;
+            return newSubjectiveQuiz(sink, session, history, latest, pending);
         }
         if (isQuizTrigger(latest)) {
             if (pending != null && !pending.unanswered().isEmpty()) {
-                resendQuiz(sink, session, history, pending);
-            } else {
-                newQuiz(sink, session, history, latest, pending);
+                return resendQuiz(sink, session, pending);
             }
-            return true;
+            return newQuiz(sink, session, history, latest, pending);
         }
         if (latest.contains("交卷") && pending != null && !pending.unanswered().isEmpty()) {
-            judgeBatch(sink, session, history, pending, latest);
-            return true;
+            return judgeBatch(sink, session, pending, latest);
+        }
+        // 纯答案格式交卷：有未答题组时，单字母(A/B)、题号+字母(1A)、多题答案(1B 2AD 3C)均视为交卷
+        if (pending != null && !pending.unanswered().isEmpty() && isAnswerSubmission(latest)) {
+            return judgeBatch(sink, session, pending, latest);
         }
         return reportProfile(sink, session, history);
+    }
+
+    /**
+     * 纯答案格式检测（仅在有未答题组时调用）：
+     * - 单字母：A / B / C / D（默认对应第1题）
+     * - 题号+字母：1A / 2:B / 3 C
+     * - 多题答案：1B 2AD 3C / A B C
+     * 非答案文本（如"这题选什么"、"你好"）返回 false，交给正常法学问答。
+     */
+    static boolean isAnswerSubmission(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String t = text.trim();
+        // 纯字母串（1~4 个 A-D）：A / AB / ABC / ABD
+        if (t.matches("[A-Da-d]{1,4}")) {
+            return true;
+        }
+        // 题号+字母格式，至少匹配一组：1A / 1:A / 1 A / 1B 2AD 3C
+        if (Pattern.compile("(\\d+)\\s*[:：]?\\s*([A-Da-d]+)").matcher(t).find()) {
+            return true;
+        }
+        // 空格分隔的纯字母序列：A B C / A B D
+        if (t.matches("[A-Da-d](\\s+[A-Da-d]){0,5}")) {
+            return true;
+        }
+        return false;
     }
 
     /** 备考意图信号探测（公开静态：法学问答检索分支也用）：真题检索只在备考/刷题语境下触发 */
@@ -146,38 +174,53 @@ public class LawQuizFlowService {
         return rest.replaceFirst("^[：:\\s]+", "").trim();
     }
 
-    /** 交卷作答解析：「交卷：1B 2AD 3C」→ {1:B, 2:AD, 3:C}（键=组内题号，值=字母串大写；同号后者覆盖，乱序保留插入序；无匹配返回空） */
+    /**
+     * 交卷作答解析，支持三种格式：
+     * ① 题号+字母：「1B 2AD 3C」「1:B 2:C」→ {1:B, 2:AD, 3:C}
+     * ② 纯字母串：「ABC」「ABD」→ 按序对应未答题 {1:A, 2:B, 3:C}
+     * ③ 空格分隔字母：「A B C」→ 按序对应未答题 {1:A, 2:B, 3:C}
+     * 键=组内题号，值=字母串大写；同号后者覆盖；无匹配返回空。
+     */
     static java.util.Map<Integer, String> parseSubmission(String submission) {
-        Matcher m = Pattern.compile("(\\d+)\\s*[:：]?\\s*([A-Da-d]+)")
-                .matcher(submission == null ? "" : submission);
         java.util.Map<Integer, String> answers = new java.util.LinkedHashMap<>();
+        if (submission == null || submission.isBlank()) {
+            return answers;
+        }
+        String t = submission.trim();
+        // 格式①：题号+字母（优先，最明确）
+        Matcher m = Pattern.compile("(\\d+)\\s*[:：]?\\s*([A-Da-d]+)").matcher(t);
         while (m.find()) {
             answers.put(Integer.parseInt(m.group(1)), m.group(2).toUpperCase());
+        }
+        if (!answers.isEmpty()) {
+            return answers;
+        }
+        // 格式②③：纯字母，按序映射到第 1..N 题
+        String letters = t.replaceAll("\\s+", "");
+        if (letters.matches("[A-Da-d]{1,6}")) {
+            for (int i = 0; i < letters.length(); i++) {
+                answers.put(i + 1, String.valueOf(letters.charAt(i)).toUpperCase());
+            }
         }
         return answers;
     }
 
-    /** 学情汇报（画像 P1）：纯代码聚合画像 + 模板输出，零模型调用 */
-    private boolean reportProfile(FluxSink<IdeaChatService.StreamEvent> sink,
+    /** 学情汇报（画像 P1）：纯代码聚合画像 + 模板输出，零模型调用；未命中返回 null */
+    private String reportProfile(FluxSink<IdeaChatService.StreamEvent> sink,
             IdeaSessionEntity session, List<IdeaChatService.InMessage> history) {
         String latest = latestUserText(history);
         if (latest.isBlank() || PROFILE_TRIGGERS.stream().noneMatch(latest::contains)) {
-            return false;
+            return null;
         }
         log.info("学情汇报流程开讲（sessionId={}）", session.getId());
         sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "翻看你的答题簿…"));
         String report = lawProfile.report(session.getUserId());
         String reply = report != null ? report
                 : "答题簿还空着——先练一组（说「出几道题」便是），再唤老朽替你盘账不迟。";
-        try {
-            saveQuizRound(session.getId(), history, reply);
-        } catch (Exception e) {
-            log.warn("学情汇报落库失败（不影响展示）：{}", e.getMessage());
-        }
         sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, reply));
         sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
         sink.complete();
-        return true;
+        return reply;
     }
 
     /** 当前题组状态：最近一封 question 信封 − 该用户已答记录；无信封/解析失败返回 null（answer_records 为持久真相） */
@@ -208,8 +251,9 @@ public class LawQuizFlowService {
         }
     }
 
-    /** 出题：检索佐证 → 出题官逐题生成逐题下发（首题约 15 秒可见，不必等全组）→ 信封落库（历史恢复以此为准） */
-    private void newQuiz(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
+    /** 出题：检索佐证 → 出题官逐题生成逐题下发（首题约 15 秒可见，不必等全组）→ 信封落库（历史恢复以此为准）。
+     *  返回落库文本（intro 或含歇笔提示），对话轮由编排器统一收口 */
+    private String newQuiz(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
             List<IdeaChatService.InMessage> history, String triggerText, PendingQuiz pending) {
         log.info("出题流程开讲（sessionId={}，trigger={}）", session.getId(), triggerText);
         sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "出题官正在拟题，好题约需半盏茶功夫，逐题呈上…"));
@@ -238,7 +282,6 @@ public class LawQuizFlowService {
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "翻看你的学情簿，照弱点下题…"));
             }
             String intro = "好，这就出题——逐题呈上，各题点选你的答案，选满后按「交卷」，老朽当场讲评。";
-            saveQuizRound(session.getId(), history, intro);
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, intro));
             List<LawQuestionGenService.QuizQuestion> questions = new ArrayList<>();
             List<String> usedPoints = new ArrayList<>();
@@ -256,25 +299,29 @@ public class LawQuizFlowService {
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.QUESTION, toJsonValue(q)));
             }
             if (questions.isEmpty()) {
+                String msg = intro + "\n出题官暂时歇笔，稍后再唤一声便是。";
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, "\n出题官暂时歇笔，稍后再唤一声便是。"));
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
-                return;
+                return msg;
             }
             messageRepository.save(new IdeaMessageEntity(session.getId(), "question",
-                    lawQuestionGen.envelopeJson(new LawQuestionGenService.QuizEnvelope(topic, questions))));
+                    lawQuestionGen.envelopeJson(new LawQuestionGenService.QuizEnvelope(topic, questions)), "law", null));
             log.info("出题流程收口（sessionId={}，{} 题）", session.getId(), questions.size());
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
+            return intro;
         } catch (Exception e) {
             log.warn("出题流程异常：{}", e.getMessage());
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "出题官暂时开小差了，稍后再试试～"));
             sink.complete();
+            return "";
         }
     }
 
-    /** 主观题（案例分析）出题：独立成组一次一道 → 作答全文交卷 → 判卷官批改（见 judgeSubjective） */
-    private void newSubjectiveQuiz(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
+    /** 主观题（案例分析）出题：独立成组一次一道 → 作答全文交卷 → 判卷官批改（见 judgeSubjective）。
+     *  返回落库文本，对话轮由编排器统一收口 */
+    private String newSubjectiveQuiz(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
             List<IdeaChatService.InMessage> history, String triggerText, PendingQuiz pending) {
         log.info("主观题出题流程开讲（sessionId={}，trigger={}）", session.getId(), triggerText);
         sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "出题官正在拟一道案例分析题，好题约需半盏茶功夫…"));
@@ -300,34 +347,35 @@ public class LawQuizFlowService {
             LawQuestionGenService.QuizQuestion q = lawQuestionGen.generateSubjective(
                     topic, refs, examRefs, 1, usedPoints, briefing);
             if (q == null) {
-                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, "\n出题官暂时歇笔，稍后再唤一声便是。"));
+                String msg = "\n出题官暂时歇笔，稍后再唤一声便是。";
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, msg));
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
-                return;
+                return msg;
             }
             String intro = "好，这就出一道案例分析——写完你的答案按「交卷」，老朽请判卷官当场拆解。";
-            saveQuizRound(session.getId(), history, intro);
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, intro));
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.QUESTION, toJsonValue(q)));
             messageRepository.save(new IdeaMessageEntity(session.getId(), "question",
-                    lawQuestionGen.envelopeJson(new LawQuestionGenService.QuizEnvelope(topic, List.of(q)))));
+                    lawQuestionGen.envelopeJson(new LawQuestionGenService.QuizEnvelope(topic, List.of(q))), "law", null));
             log.info("主观题出题流程收口（sessionId={}，questionId={}）", session.getId(), q.id());
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
+            return intro;
         } catch (Exception e) {
             log.warn("主观题出题流程异常：{}", e.getMessage());
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "出题官暂时开小差了，稍后再试试～"));
             sink.complete();
+            return "";
         }
     }
 
-    /** 上组未答完又要求出题：重发未答题（不重复落信封，answer_records 已答的不再下发） */
-    private void resendQuiz(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
-            List<IdeaChatService.InMessage> history, PendingQuiz pending) {
+    /** 上组未答完又要求出题：重发未答题（不重复落信封，answer_records 已答的不再下发）；返回落库文本 */
+    private String resendQuiz(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
+            PendingQuiz pending) {
         String intro = "上一组还剩 " + pending.unanswered().size()
                 + " 题未答，先答完这些——各题点选后交卷便是。";
         try {
-            saveQuizRound(session.getId(), history, intro);
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, intro));
             for (LawQuestionGenService.QuizQuestion q : pending.unanswered()) {
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.QUESTION, toJsonValue(q)));
@@ -335,30 +383,30 @@ public class LawQuizFlowService {
             log.info("重发未答题（sessionId={}，剩 {} 题）", session.getId(), pending.unanswered().size());
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
+            return intro;
         } catch (Exception e) {
             log.warn("重发题目异常：{}", e.getMessage());
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "题目重发失败，稍后再试试～"));
             sink.complete();
+            return "";
         }
     }
 
-    /** 交卷判分入口：组内含主观题走判卷官批改，否则客观组批量字母判分 */
-    private void judgeBatch(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
-            List<IdeaChatService.InMessage> history, PendingQuiz pending, String submission) {
+    /** 交卷判分入口：组内含主观题走判卷官批改，否则客观组批量字母判分；返回落库文本 */
+    private String judgeBatch(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
+            PendingQuiz pending, String submission) {
         if (pending.all().stream().anyMatch(q -> "主观".equals(q.type()))) {
-            judgeSubjective(sink, session, history, pending, submission);
-            return;
+            return judgeSubjective(sink, session, pending, submission);
         }
         List<LawQuestionGenService.QuizQuestion> all = pending.all();
         java.util.Map<Integer, String> answers = parseSubmission(submission);
         try {
             if (answers.isEmpty()) {
                 String hint = "卷上还没见着答案——各题点选选项，选满后再交卷便是。";
-                saveQuizRound(session.getId(), history, hint);
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, hint));
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
-                return;
+                return hint;
             }
             StringBuilder fb = new StringBuilder("收卷，老朽逐题拆解——");
             int fresh = 0;
@@ -398,30 +446,31 @@ public class LawQuizFlowService {
                 fb.append("这一卷都是旧题重交，不另计分。");
             }
             String feedback = fb.toString();
-            saveQuizRound(session.getId(), history, feedback);
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, feedback));
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
             log.info("交卷判分（sessionId={}，交 {} 题，中 {} 题）", session.getId(), fresh, hit);
+            return feedback;
         } catch (Exception e) {
             log.warn("交卷判分异常：{}", e.getMessage());
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "讲评官暂时开小差了，稍后再试试～"));
             sink.complete();
+            return "";
         }
     }
 
-    /** 主观题交卷批改：「交卷：<作答全文>」→ 判卷官逐采分点批改 → 讲评（得分/逐点判定/总评/参考答案） */
-    private void judgeSubjective(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
-            List<IdeaChatService.InMessage> history, PendingQuiz pending, String submission) {
+    /** 主观题交卷批改：「交卷：<作答全文>」→ 判卷官逐采分点批改 → 讲评（得分/逐点判定/总评/参考答案）；
+     *  返回落库文本 */
+    private String judgeSubjective(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
+            PendingQuiz pending, String submission) {
         String answer = extractSubjectiveAnswer(submission);
         try {
             if (answer.isBlank()) {
                 String hint = "卷上还没见着字——写上你的答案再交卷便是。";
-                saveQuizRound(session.getId(), history, hint);
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, hint));
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
-                return;
+                return hint;
             }
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "判卷官正在阅卷，约需半盏茶功夫…"));
             LawQuestionGenService.QuizQuestion q = pending.all().stream()
@@ -429,12 +478,11 @@ public class LawQuizFlowService {
             com.mengx.server.law.LawSubjectiveJudgeService.GradeOutcome o = q == null ? null
                     : lawSubjectiveJudge.grade(session.getUserId(), session.getId(), q.id(), answer);
             if (o == null) {
-                saveQuizRound(session.getId(), history, submission);
-                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK,
-                        "判卷官阅卷遇到波折，稍后再交一次便是。"));
+                String msg = "判卷官阅卷遇到波折，稍后再交一次便是。";
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, msg));
                 sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
-                return;
+                return msg;
             }
             StringBuilder fb = new StringBuilder("收卷，判卷官拆解如下——\n\n");
             if (o.alreadyAnswered()) {
@@ -461,17 +509,18 @@ public class LawQuizFlowService {
             }
             fb.append("\n\n想再练一道，说「继续出」便是。");
             String feedback = fb.toString();
-            saveQuizRound(session.getId(), history, feedback);
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, feedback));
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
             log.info("主观题交卷批改（sessionId={}，questionId={}，{}）",
                     session.getId(), q == null ? null : q.id(),
                     o.alreadyAnswered() ? "重交" : o.score() + "/" + o.total());
+            return feedback;
         } catch (Exception e) {
             log.warn("主观题交卷批改异常：{}", e.getMessage());
             sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "判卷官暂时开小差了，稍后再试试～"));
             sink.complete();
+            return "";
         }
     }
 
@@ -485,27 +534,6 @@ public class LawQuizFlowService {
     }
 
     // ---------- 本地小工具（与 IdeaChatService 各自持有，避免跨服务耦合） ----------
-
-    /** 刷题轮次落库：user + assistant（与 IdeaChatService.saveRound 的 quiz 子集，无 card 分支）。
-     *  主对话代理托管窗口直读 idea_messages，刷题对话天然进窗口，无需额外镜像 */
-    private void saveQuizRound(Long sessionId, List<IdeaChatService.InMessage> history, String assistantReply) {
-        IdeaChatService.InMessage lastUser = null;
-        for (int i = history.size() - 1; i >= 0; i--) {
-            if ("user".equals(history.get(i).role())) {
-                lastUser = history.get(i);
-                break;
-            }
-        }
-        if (lastUser == null) {
-            return;
-        }
-        List<IdeaMessageEntity> round = new ArrayList<>(2);
-        round.add(new IdeaMessageEntity(sessionId, "user", lastUser.content()));
-        if (assistantReply != null && !assistantReply.isBlank()) {
-            round.add(new IdeaMessageEntity(sessionId, "assistant", assistantReply));
-        }
-        messageRepository.saveAll(round);
-    }
 
     /** 意图判定用：取 history 中最后一条 user 消息文本（无则空串） */
     private String latestUserText(List<IdeaChatService.InMessage> history) {
