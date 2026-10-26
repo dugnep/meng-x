@@ -12,8 +12,8 @@ import org.springframework.stereotype.Service;
 
 /**
  * PRD 格式化服务（瘦身后只剩一道工序）：评审与设计已前置到主对话代理与需求澄清 agent 的共创对话里，
- * 这里只把功能卡与方案卷轴格式化成施工文档——单次调用，不新增设计、不遗漏验收标准。
- * 按卡片体量分流：功能级卡出施工 PRD，应用级卡出「应用蓝图文档」（模块/数据/集成/分期）。
+ * 这里只把功能卡与设计沉淀格式化成施工文档——单次调用，不新增设计、不遗漏验收标准。
+ * 统一出「应用蓝图文档」（模块/数据/集成/分期）。
  * 产出为 Markdown 文本直接存 prdJson，可直接投喂 AI 编程工具。
  */
 @Service
@@ -96,11 +96,8 @@ public class IdeaPrdService {
         String prdStatus;
         String prdJson = null;
         try {
-            // 体量分流：功能卡出施工 PRD，应用卡出应用蓝图文档
             String input = buildContext(card) + "\n\n" + stack;
-            String markdown = IdeaCardEntity.SCALE_APP.equals(card.getScale())
-                    ? ideaAgents.prdFormatter().formatBlueprint(input)
-                    : ideaAgents.prdFormatter().formatFunctionPrd(input);
+            String markdown = ideaAgents.prdFormatter().formatBlueprint(input);
             prdJson = truncate(markdown, 12000);
             prdStatus = IdeaCardEntity.PRD_DONE;
         } catch (Exception e) {
@@ -125,41 +122,27 @@ public class IdeaPrdService {
                 .filter(md -> !md.isBlank());
     }
 
-    /** 组装格式化输入：功能卡四要素 + 优先级 + 方案卷轴（设计沉淀以此为准） */
+    /** 组装格式化输入：功能卡主字段 + 优先级 + 设计沉淀（格式化以此为准） */
     private String buildContext(IdeaCardEntity card) {
         return """
                 【功能卡】
                 标题：%s
                 一句话：%s
-                谁在用：%s
-                什么时机用：%s
-                要什么反应：%s
-                没有它时怎么办：%s
                 创意值：%d 星
-                体量：%s
                 优先级：%s
                 提出人：%s
 
-                【方案卷轴】（主对话代理与客人共创的设计沉淀，格式化以此为准）
+                【设计沉淀】（主对话代理与客人共创：核心三要素 + 动态维度 + 边界兜底 + 关键项留痕，格式化以此为准）
                 %s
                 """.formatted(
                 card.getTitle(),
                 card.getSummary(),
-                or(card.getTargetUser()),
-                or(card.getTriggerScene()),
-                or(card.getReaction()),
-                or(card.getFallback()),
                 card.getCreativity(),
-                card.getScale() == null ? IdeaCardEntity.SCALE_FUNCTION : card.getScale(),
                 card.getPriority() == null ? "中" : card.getPriority(),
                 card.getNickname(),
                 card.getDesignJson() == null || card.getDesignJson().isBlank()
-                        ? "（无卷轴：按四要素补最小可行方案，不擅自扩大范围）"
+                        ? "（无沉淀：按一句话说明补最小可行方案，不擅自扩大范围）"
                         : card.getDesignJson());
-    }
-
-    private static String or(String s) {
-        return s == null || s.isBlank() ? "待聊" : s;
     }
 
     private static String truncate(String s, int max) {

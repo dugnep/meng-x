@@ -9,8 +9,10 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 /**
- * 功能卡（设计方案 §4.5）：只谈「做什么」，刻意没有技术字段。
- * 状态机（§5）：新芽 → 已确认 → 已采纳 → 已实现 / 已谢绝。
+ * 功能卡（新结构：核心三要素 + 动态维度，只谈「做什么」，刻意没有技术字段）。
+ * 主卡字段轻量展示；设计沉淀整体存 designJson（functions/effects/approach/dimensions/
+ * constraints/feasibilityNotes/keyItems）。
+ * 状态机：新芽 → 已确认（=授权开工，造物线工单已开）→ 已实现（终态）；不要了直接删卡。
  */
 @Entity
 @Table(name = "idea_cards")
@@ -18,9 +20,7 @@ public class IdeaCardEntity {
 
     public static final String STATUS_SPROUT = "SPROUT";
     public static final String STATUS_CONFIRMED = "CONFIRMED";
-    public static final String STATUS_ACCEPTED = "ACCEPTED";
     public static final String STATUS_IMPLEMENTED = "IMPLEMENTED";
-    public static final String STATUS_DECLINED = "DECLINED";
 
     public static final String PRD_NONE = "NONE";
     public static final String PRD_RUNNING = "RUNNING";
@@ -30,10 +30,6 @@ public class IdeaCardEntity {
     /** 施工包状态：NONE 未开工；在制随工单状态流转（RUNNING/WAITING_USER/REVIEW…），终态 DONE/FAILED/CANCELLED */
     public static final String BUILD_NONE = "NONE";
     public static final String BUILD_DONE = "DONE";
-
-    /** 体量：功能（本产品一项能力的小点子）/ 应用（要拆多模块、值得立项的复合大点子） */
-    public static final String SCALE_FUNCTION = "功能";
-    public static final String SCALE_APP = "应用";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -54,22 +50,6 @@ public class IdeaCardEntity {
     @Column(nullable = false, length = 500)
     private String summary;
 
-    /** 谁在用 */
-    @Column(length = 200)
-    private String targetUser;
-
-    /** 什么时机 */
-    @Column(length = 200)
-    private String triggerScene;
-
-    /** 要什么反应 */
-    @Column(length = 200)
-    private String reaction;
-
-    /** 边界情况：没有它时怎么办 */
-    @Column(length = 200)
-    private String fallback;
-
     /** 创意值：卡片装配时 AI 评 1~5 星新颖度 */
     @Column(nullable = false)
     private Integer creativity;
@@ -77,19 +57,18 @@ public class IdeaCardEntity {
     @Column(nullable = false, length = 20)
     private String status;
 
-    /** 谢绝理由（温和的一句温度话，朋友可见） */
-    @Column(length = 200)
-    private String declineReason;
-
-    /** 优先级（高/中/低）：设计简报给出的投入建议，取代原评审团 */
+    /** 优先级（高/中/低）：设计简报给出的投入建议 */
     @Column(length = 10)
     private String priority;
 
-    /** 体量：功能 / 应用（应用卡的卷轴承载应用蓝图，PRD 格式化出蓝图文档） */
-    @Column(length = 10)
-    private String scale;
+    /** 来源应用提案（idea_proposals）；许愿池等无提案来源的卡为 null */
+    @Column
+    private Long proposalId;
 
-    /** 方案卷轴（双层卡的下层）：需求澄清共创的设计沉淀 JSON {approach,boundary,acceptance} */
+    /**
+     * 设计沉淀 JSON：{functions:[], effects, approach, dimensions:[{name,content}],
+     * constraints, feasibilityNotes, keyItems:[{type,content,status,conclusion}]}
+     */
     @Column(columnDefinition = "text")
     private String designJson;
 
@@ -131,24 +110,12 @@ public class IdeaCardEntity {
 
     protected IdeaCardEntity() {}
 
-    public IdeaCardEntity(
-            Long sessionId,
-            String nickname,
-            String title,
-            String summary,
-            String targetUser,
-            String triggerScene,
-            String reaction,
-            String fallback,
-            Integer creativity) {
+    public IdeaCardEntity(Long sessionId, String nickname, String title, String summary,
+                          Integer creativity) {
         this.sessionId = sessionId;
         this.nickname = nickname;
         this.title = title;
         this.summary = summary;
-        this.targetUser = targetUser;
-        this.triggerScene = triggerScene;
-        this.reaction = reaction;
-        this.fallback = fallback;
         this.creativity = creativity;
         this.status = STATUS_SPROUT;
     }
@@ -158,17 +125,19 @@ public class IdeaCardEntity {
         this.updatedAt = Instant.now();
     }
 
-    public void updateStatus(String status, String declineReason) {
+    public void updateStatus(String status) {
         this.status = status;
-        this.declineReason = declineReason;
         this.updatedAt = Instant.now();
     }
 
-    /** 规格定稿时随方案卷轴一并写入（体量 + 需求澄清共创的设计沉淀 + 优先级） */
-    public void applyDesign(String scale, String priority, String designJson) {
-        this.scale = SCALE_APP.equals(scale) ? SCALE_APP : SCALE_FUNCTION;
+    /** 规格定稿时写入设计沉淀（优先级 + 设计 JSON） */
+    public void applyDesign(String priority, String designJson) {
         this.priority = priority == null || priority.isBlank() ? null : priority.trim();
         this.designJson = designJson;
+    }
+
+    public void bindProposal(Long proposalId) {
+        this.proposalId = proposalId;
     }
 
     /** PRD 车间状态流转并记录产出（DONE 时记录时间） */
@@ -210,22 +179,6 @@ public class IdeaCardEntity {
         return summary;
     }
 
-    public String getTargetUser() {
-        return targetUser;
-    }
-
-    public String getTriggerScene() {
-        return triggerScene;
-    }
-
-    public String getReaction() {
-        return reaction;
-    }
-
-    public String getFallback() {
-        return fallback;
-    }
-
     public Integer getCreativity() {
         return creativity;
     }
@@ -234,16 +187,12 @@ public class IdeaCardEntity {
         return status;
     }
 
-    public String getDeclineReason() {
-        return declineReason;
-    }
-
     public String getPriority() {
         return priority;
     }
 
-    public String getScale() {
-        return scale;
+    public Long getProposalId() {
+        return proposalId;
     }
 
     public String getDesignJson() {

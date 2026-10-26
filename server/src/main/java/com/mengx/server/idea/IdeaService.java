@@ -2,6 +2,7 @@ package com.mengx.server.idea;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mengx.server.forge.ForgeService;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -18,23 +19,20 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 创意收集业务：会话管理、看板、状态流转、导出。
  * 所有人登录即用户（登录即注册），卡片归属校验按会话归属（谁聊的谁确认）。
+ * 状态机：新芽 →（本人确认=授权开工，事务内自动建造物线工单）→ 已确认 → 已实现；不要了直接删卡。
  */
 @Service
 public class IdeaService {
 
-    /** 状态机（§5）：新芽只由本人确认；已谢绝/已实现为终态 */
+    /** 状态机：已确认（造物线在制）→ 已实现（终态） */
     private static final Map<String, Set<String>> ALLOWED_TRANSITIONS = Map.of(
             IdeaCardEntity.STATUS_CONFIRMED,
-            Set.of(IdeaCardEntity.STATUS_ACCEPTED, IdeaCardEntity.STATUS_DECLINED),
-            IdeaCardEntity.STATUS_ACCEPTED,
             Set.of(IdeaCardEntity.STATUS_IMPLEMENTED));
 
     private static final Map<String, String> STATUS_LABELS = Map.of(
             IdeaCardEntity.STATUS_SPROUT, "新芽",
             IdeaCardEntity.STATUS_CONFIRMED, "已确认",
-            IdeaCardEntity.STATUS_ACCEPTED, "已采纳",
-            IdeaCardEntity.STATUS_IMPLEMENTED, "已实现",
-            IdeaCardEntity.STATUS_DECLINED, "已谢绝");
+            IdeaCardEntity.STATUS_IMPLEMENTED, "已实现");
 
     private static final DateTimeFormatter DATE_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault());
@@ -48,6 +46,7 @@ public class IdeaService {
     private final IdeaPrdService prdService;
     private final IdeaThanksService thanksService;
     private final IdeaLikeRepository likeRepository;
+    private final ForgeService forgeService;
     private final ObjectMapper objectMapper;
 
     public IdeaService(
@@ -57,6 +56,7 @@ public class IdeaService {
             IdeaPrdService prdService,
             IdeaThanksService thanksService,
             IdeaLikeRepository likeRepository,
+            ForgeService forgeService,
             ObjectMapper objectMapper) {
         this.sessionRepository = sessionRepository;
         this.cardRepository = cardRepository;
@@ -64,6 +64,7 @@ public class IdeaService {
         this.prdService = prdService;
         this.thanksService = thanksService;
         this.likeRepository = likeRepository;
+        this.forgeService = forgeService;
         this.objectMapper = objectMapper;
     }
 
@@ -232,8 +233,8 @@ public class IdeaService {
                 .toList();
     }
 
-    /** 状态流转（§5），非法流转返回空 */
-    public Optional<IdeaCardDto> updateCardStatus(Long cardId, String status, String declineReason) {
+    /** 状态流转（已确认 → 已实现），非法流转返回空 */
+    public Optional<IdeaCardDto> updateCardStatus(Long cardId, String status) {
         Optional<IdeaCardEntity> found = cardRepository.findById(cardId);
         if (found.isEmpty()) {
             return Optional.empty();
@@ -243,7 +244,7 @@ public class IdeaService {
         if (!allowed.contains(status)) {
             return Optional.empty();
         }
-        card.updateStatus(status, declineReason == null || declineReason.isBlank() ? null : declineReason.trim());
+        card.updateStatus(status);
         IdeaCardEntity saved = cardRepository.save(card);
         // 点子修成 → 仙君给提出人递感谢卡（异步，一张卡只递一次）
         if (IdeaCardEntity.STATUS_IMPLEMENTED.equals(status)) {
@@ -252,7 +253,12 @@ public class IdeaService {
         return Optional.of(IdeaCardDto.from(saved));
     }
 
-    /** 本人确认功能卡：新芽 → 已确认（§5），卡片必须属于本人会话 */
+    /**
+     * 本人确认功能卡 = 授权开工：新芽 → 已确认，同一事务内自动创建造物线工单。
+     * 卡片必须属于本人会话；工单创建失败整体回滚（卡片保持新芽，用户可重试确认），
+     * 失败原因以 IllegalStateException 抛出，由控制器转 409。
+     */
+    @Transactional
     public Optional<IdeaCardDto> confirmCard(Long userId, Long sessionId, Long cardId) {
         Optional<IdeaSessionEntity> session = findSession(userId, sessionId);
         if (session.isEmpty()) {
@@ -264,16 +270,21 @@ public class IdeaService {
         }
         found.get().confirm();
         IdeaCardEntity saved = cardRepository.save(found.get());
+        ForgeService.StartResult result =
+                forgeService.startBuild(userId, session.get().getNickname(), cardId);
+        if (!result.ok()) {
+            throw new IllegalStateException(result.message());
+        }
         return Optional.of(IdeaCardDto.from(saved));
     }
 
-    /** 开进 PRD 车间（看板入口）：只有已采纳（ACCEPTED）的卡才能排产出稿 */
+    /** 开进 PRD 车间（看板入口）：只有已确认（CONFIRMED）的卡才能排产出稿 */
     public boolean requestPrd(Long cardId) {
-        boolean accepted = cardRepository
+        boolean confirmed = cardRepository
                 .findById(cardId)
-                .filter(c -> IdeaCardEntity.STATUS_ACCEPTED.equals(c.getStatus()))
+                .filter(c -> IdeaCardEntity.STATUS_CONFIRMED.equals(c.getStatus()))
                 .isPresent();
-        if (!accepted) {
+        if (!confirmed) {
             return false;
         }
         prdService.generateAsync(cardId);
@@ -317,8 +328,7 @@ public class IdeaService {
             md.append("# 点子铺 · 功能卡\n\n");
         } else {
             long confirmed = cards.stream()
-                    .filter(c -> !IdeaCardEntity.STATUS_SPROUT.equals(c.getStatus())
-                            && !IdeaCardEntity.STATUS_DECLINED.equals(c.getStatus()))
+                    .filter(c -> !IdeaCardEntity.STATUS_SPROUT.equals(c.getStatus()))
                     .count();
             md.append("# 点子铺 · 功能卡清单\n\n")
                     .append("> 导出于 ").append(DATE_FMT.format(java.time.Instant.now()))
@@ -329,57 +339,73 @@ public class IdeaService {
             md.append("---\n\n")
                     .append("## ").append(c.getTitle()).append('\n')
                     .append("- 一句话说明：").append(c.getSummary()).append('\n')
-                    .append("- 谁在用：").append(c.getTargetUser()).append('\n')
-                    .append("- 什么时机：").append(c.getTriggerScene()).append('\n')
-                    .append("- 要什么反应：").append(c.getReaction()).append('\n')
-                    .append("- 边界情况：").append(c.getFallback()).append('\n')
                     .append("- 创意值：").append(stars(c.getCreativity()))
                     .append("（").append(c.getCreativity()).append("/5）\n");
             if (c.getPriority() != null) {
                 md.append("- 优先级：").append(c.getPriority()).append('\n');
             }
-            if (IdeaCardEntity.SCALE_APP.equals(c.getScale())) {
-                md.append("- 体量：应用（多模块复合，含应用蓝图）\n");
-            }
-            md.append(renderScroll(c.getDesignJson()))
+            md.append(renderDesign(c.getDesignJson()))
                     .append("- 来源：").append(c.getNickname())
                     .append("（").append(DATE_FMT.format(c.getCreatedAt())).append("）\n")
                     .append("- 状态：").append(STATUS_LABELS.get(c.getStatus())).append('\n');
-            if (IdeaCardEntity.STATUS_DECLINED.equals(c.getStatus())
-                    && c.getDeclineReason() != null) {
-                md.append("- 谢绝理由：").append(c.getDeclineReason()).append('\n');
-            }
             md.append('\n');
         }
         return md.toString();
     }
 
-    /** 方案卷轴（双层卡下层）展开为导出行，无卷轴返回空串 */
-    private String renderScroll(String designJson) {
+    /** 设计沉淀（核心三要素 + 动态维度 + 边界兜底 + 关键项）展开为导出行，无沉淀返回空串 */
+    private String renderDesign(String designJson) {
         if (designJson == null || designJson.isBlank()) {
             return "";
         }
         try {
             JsonNode d = objectMapper.readTree(designJson);
-            String approach = scrollText(d, "approach");
-            String boundary = scrollText(d, "boundary");
-            String acceptance = scrollText(d, "acceptance");
-            String blueprint = scrollText(d, "blueprint");
-            if (approach == null && boundary == null && acceptance == null && blueprint == null) {
-                return "";
-            }
             StringBuilder sb = new StringBuilder();
+            JsonNode functions = d.path("functions");
+            if (functions.isArray() && !functions.isEmpty()) {
+                sb.append("- 做什么：\n");
+                for (JsonNode f : functions) {
+                    sb.append("  - ").append(f.asText("")).append('\n');
+                }
+            }
+            String effects = designText(d, "effects");
+            if (effects != null) {
+                sb.append("- 怎么算成：").append(effects).append('\n');
+            }
+            String approach = designText(d, "approach");
             if (approach != null) {
-                sb.append("- 实现要点：").append(approach).append('\n');
+                sb.append("- 实现思路：").append(approach).append('\n');
             }
-            if (boundary != null) {
-                sb.append("- 边界处理：").append(boundary).append('\n');
+            JsonNode dimensions = d.path("dimensions");
+            if (dimensions.isArray() && !dimensions.isEmpty()) {
+                for (JsonNode dim : dimensions) {
+                    String name = dim.path("name").asText("").trim();
+                    if (!name.isEmpty()) {
+                        sb.append("- ").append(name).append("：")
+                                .append(dim.path("content").asText("待聊")).append('\n');
+                    }
+                }
             }
-            if (acceptance != null) {
-                sb.append("- 验收标准：").append(acceptance).append('\n');
+            String constraints = designText(d, "constraints");
+            if (constraints != null) {
+                sb.append("- 边界与兜底：").append(constraints).append('\n');
             }
-            if (blueprint != null) {
-                sb.append("- 应用蓝图：").append(blueprint).append('\n');
+            String notes = designText(d, "feasibilityNotes");
+            if (notes != null) {
+                sb.append("- 可行性说明：").append(notes).append('\n');
+            }
+            JsonNode keyItems = d.path("keyItems");
+            if (keyItems.isArray() && !keyItems.isEmpty()) {
+                sb.append("- 关键项留痕：\n");
+                for (JsonNode k : keyItems) {
+                    sb.append("  - [").append(k.path("type").asText("诉求")).append("] ")
+                            .append(k.path("content").asText(""));
+                    if ("resolved".equals(k.path("status").asText(""))
+                            && !k.path("conclusion").asText("").isBlank()) {
+                        sb.append("（结论：").append(k.path("conclusion").asText("")).append("）");
+                    }
+                    sb.append('\n');
+                }
             }
             return sb.toString();
         } catch (Exception e) {
@@ -387,8 +413,8 @@ public class IdeaService {
         }
     }
 
-    /** 卷轴字段文本，"待聊"或缺失视为没有 */
-    private static String scrollText(JsonNode node, String field) {
+    /** 设计字段文本，"待聊"或缺失视为没有 */
+    private static String designText(JsonNode node, String field) {
         String v = node.path(field).asText("").trim();
         return v.isEmpty() || "待聊".equals(v) ? null : v;
     }

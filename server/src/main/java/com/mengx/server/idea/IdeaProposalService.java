@@ -379,8 +379,20 @@ public class IdeaProposalService {
 
     // ==================== 私有工具 ====================
 
+    /** 本场最近一条已许可提案的 id（功能卡溯源绑定用）；无则返回 null */
+    public Long acceptedProposalId(Long sessionId) {
+        try {
+            return proposalRepository
+                    .findBySessionIdAndStatusOrderByIdDesc(sessionId, IdeaProposalEntity.STATUS_ACCEPTED)
+                    .stream().findFirst().map(IdeaProposalEntity::getId).orElse(null);
+        } catch (Exception e) {
+            log.warn("已许可提案查询失败（卡片不绑提案来源，不影响装配）：{}", e.getMessage());
+            return null;
+        }
+    }
+
     /**
-     * 未消化的已许可提案四要素（发现模式推演背景注入）：
+     * 未消化的已许可提案要素（发现模式推演背景注入）：
      * 最新 ACCEPTED 提案许可后尚无推演存档（counsel 行）时返回要素文本，否则 null。
      * 供用户首轮发言的同步推演携带——共创推演官把它连同用户回答一起画进第一版快照。
      */
@@ -419,7 +431,7 @@ public class IdeaProposalService {
             sb.append("- ").append(spec.name()).append("：").append(spec.routeDescription()).append('\n');
         }
         sb.append("- 基础服务：手机号登录（登录即注册）、功能卡看板与状态流转、点赞与创意榜、每日一签\n");
-        sb.append("- 文档与施工：已采纳的应用卡可生成施工 PRD 与施工包（造物线）\n");
+        sb.append("- 文档与施工：功能卡确认后自动进入造物线，产出施工包（可下载投喂 AI 编程工具）\n");
         return sb.toString().trim();
     }
 

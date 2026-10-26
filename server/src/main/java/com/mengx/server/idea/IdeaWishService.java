@@ -1,6 +1,8 @@
 package com.mengx.server.idea;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mengx.server.idea.agent.IdeaAgentFactory;
 import com.mengx.server.idea.agent.WishCard;
 import com.mengx.server.idea.agent.WishDraft;
@@ -85,16 +87,14 @@ public class IdeaWishService {
 
         // 卡片定稿入库（新芽），并自动为这场愿望开一场记录，回聊天页可继续打磨
         IdeaSessionEntity session = sessionRepository.save(new IdeaSessionEntity(userId, nickname));
-        IdeaCardEntity card = cardRepository.save(new IdeaCardEntity(
+        IdeaCardEntity card = new IdeaCardEntity(
                 session.getId(),
                 nickname,
                 title,
                 orField(or(refined.summary(), draft.summary())),
-                orField(or(refined.targetUser(), draft.targetUser())),
-                orField(or(refined.triggerScene(), draft.triggerScene())),
-                orField(or(refined.reaction(), draft.reaction())),
-                orField(or(refined.fallback(), draft.fallback())),
-                clamp(refined.creativity() == null ? 3 : refined.creativity())));
+                clamp(refined.creativity() == null ? 3 : refined.creativity()));
+        card.applyDesign(null, wishDesignJson(refined, draft));
+        card = cardRepository.save(card);
         messageRepository.saveAll(List.of(
                 new IdeaMessageEntity(session.getId(), "user", wish),
                 new IdeaMessageEntity(session.getId(), "assistant",
@@ -103,6 +103,23 @@ public class IdeaWishService {
                 new IdeaMessageEntity(session.getId(), "card", String.valueOf(card.getId()))));
         log.info("愿望定稿成卡成功：用户{} → 《{}》cardId={}", userId, card.getTitle(), card.getId());
         return Optional.of(IdeaCardDto.from(card));
+    }
+
+    /** 许愿池设计沉淀映射：愿望初稿四要素装入新结构（核心三要素 + 动态维度 + 边界兜底） */
+    private String wishDesignJson(WishCard refined, WishDraft draft) {
+        ObjectNode design = objectMapper.createObjectNode();
+        design.putArray("functions").add(orField(or(refined.summary(), draft.summary())));
+        design.put("effects", orField(or(refined.reaction(), draft.reaction())));
+        design.put("approach", "待聊");
+        ArrayNode dims = design.putArray("dimensions");
+        dims.addObject().put("name", "谁在用")
+                .put("content", orField(or(refined.targetUser(), draft.targetUser())));
+        dims.addObject().put("name", "什么时机用")
+                .put("content", orField(or(refined.triggerScene(), draft.triggerScene())));
+        design.put("constraints", orField(or(refined.fallback(), draft.fallback())));
+        design.put("feasibilityNotes", "");
+        design.putArray("keyItems");
+        return toJson(design);
     }
 
     private String shelfText(List<IdeaCardEntity> cards) {

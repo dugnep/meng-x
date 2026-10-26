@@ -12,8 +12,8 @@ import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
- * 需求分析师岗（方案 §6.3 首岗）：把前殿共创的九格营造图快照深化为施工包「产品深化段」。
- * 读九格快照 + 卡片四要素；写黑板 product/openQuestions 两段；不碰技术设计（留给架构师）。
+ * 需求分析师岗（方案 §6.3 首岗）：把前殿共创的营造图快照深化为施工包「产品深化段」。
+ * 读营造图快照 + 卡片标题/一句话；写黑板 product/openQuestions 两段；不碰技术设计（留给架构师）。
  * 输出规则：验收 String→可测条目数组、边界拆四类、人设补正反例、数据需求补来源/冷启动/成本、
  * 合规段强制非空；能给合理默认的问题不问人（终审标「仙官代拟」），真拿不定才 WAIT 挂问（一轮最多一个）。
  *
@@ -39,7 +39,7 @@ public class AnalystRole implements ForgeAgent {
 
     @Override
     public List<String> reads() {
-        // 黑板上无上游段：读九格快照（design_snapshot）与卡片四要素（信封外输入）
+        // 黑板上无上游段：读营造图快照（design_snapshot）与卡片标题/一句话（信封外输入）
         return List.of();
     }
 
@@ -89,18 +89,15 @@ public class AnalystRole implements ForgeAgent {
         return q != null && !isBlank(q.question()) ? "WAIT" : "CONTINUE";
     }
 
-    /** 任务输入：四要素 + 冻结快照（+ 修订场景的上一版产品段 / 客人对挂起问题的回答原文） */
+    /** 任务输入：卡片主字段 + 冻结快照（+ 修订场景的上一版产品段 / 客人对挂起问题的回答原文） */
     private String buildUserPrompt(ForgeContext ctx) {
         IdeaCardEntity card = ctx.card();
         StringBuilder sb = new StringBuilder();
-        sb.append("【功能卡四要素】\n");
+        sb.append("【功能卡】\n");
         sb.append("标题：").append(card.getTitle()).append('\n');
         sb.append("一句话：").append(card.getSummary()).append('\n');
-        sb.append("谁在用：").append(or(card.getTargetUser())).append('\n');
-        sb.append("什么时机：").append(or(card.getTriggerScene())).append('\n');
-        sb.append("要什么反应：").append(or(card.getReaction())).append('\n');
-        sb.append("出岔子怎么办：").append(or(card.getFallback())).append('\n');
-        sb.append("\n【营造图九格快照】（开工时冻结版，全程以此为准，主线后续变更不追）\n")
+        sb.append("\n【营造图快照】（开工时冻结版：核心三要素 + 动态维度 + 边界兜底 + 关键项留痕，")
+                .append("全程以此为准，主线后续变更不追）\n")
                 .append(ctx.job().getDesignSnapshot()).append('\n');
         if (ctx.board().getProduct() != null) {
             sb.append("\n【当前产品深化段】（上一版，本次在其基础上修订，不要推倒重来）\n")
@@ -128,9 +125,5 @@ public class AnalystRole implements ForgeAgent {
 
     private static boolean isBlank(String s) {
         return s == null || s.isBlank();
-    }
-
-    private static String or(String s) {
-        return isBlank(s) ? "待聊" : s;
     }
 }
