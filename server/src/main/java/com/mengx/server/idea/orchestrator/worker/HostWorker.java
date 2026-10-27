@@ -88,7 +88,7 @@ public class HostWorker {
         }
 
         List<ChatMessage> messages = buildMessages(systemPrompt, history, userText);
-        List<ToolSpecification> toolSpecs = buildToolSpecifications();
+        List<ToolSpecification> toolSpecs = buildToolSpecifications(session);
 
         ChatRequest request = ChatRequest.builder()
                 .messages(messages)
@@ -148,9 +148,13 @@ public class HostWorker {
         });
     }
 
-    private List<ToolSpecification> buildToolSpecifications() {
+    /** 组装本轮对 Host 可见的工具列表（availableFor 过滤：许可制领域冷启动不挂载，Host 无从调用） */
+    private List<ToolSpecification> buildToolSpecifications(IdeaSessionEntity session) {
         List<ToolSpecification> specs = new ArrayList<>();
         for (DomainTool tool : domainTools) {
+            if (!tool.availableFor(session)) {
+                continue;
+            }
             String json = """
                     {"name":"%s","description":"%s","parameters":%s}"""
                     .formatted(tool.name(), escape(tool.description()), tool.parametersSchema());
@@ -200,7 +204,7 @@ public class HostWorker {
 
                 # 内部纪律（客人不可见）
                 你手底下有若干垂直领域的下属代理。评估每轮问题：自己能答的直接回答；
-                需要专业领域能力（如法条检索、合同审查、出题判分等）时，选择对应的下属代理调用。
+                需要专业领域能力（如法条检索、合同审查、出题判分、需求共创访谈等）时，选择对应的下属代理调用。
                 调用代理时不输出过渡语，代理的回答就是你的回答，自然呈现给客人。
 
                 # 说话方式

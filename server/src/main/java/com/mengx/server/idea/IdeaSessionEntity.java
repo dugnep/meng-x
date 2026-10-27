@@ -33,20 +33,9 @@ public class IdeaSessionEntity {
     private String nickname;
 
     /**
-     * 需求澄清循环开关（orchestrator 状态）：轮次评估识别到功能愿望信号（WISH）时开启，
-     * 之后每轮回复前主对话代理先请双官推演状态注入；规格定稿或转闲聊时关闭。
-     * 用户全程只感知主对话代理一人，内部 agent 不可见。（DB 列名沿用 design_mode，兼容存量数据）
-     */
-    // 不用 columnDefinition 带 default：Hibernate 6.6 update 模式会把整串当列类型，
-    // 对 PG 生成非法的「set data type boolean not null default false」。
-    // 存量表加列时的 default false 由一次性 DDL 保证，新插入靠 Java 字段初始化。
-    @Column(name = "design_mode", nullable = false)
-    private boolean discoveryActive = false;
-
-    /**
-     * 人设模式（同一主对话代理的换挡，不分裂会话）：host=本色陪聊（默认）/ law=法学模式。
-     * 通道裁决结果随消息落会话；法学问答不触发规格定稿链路。
-     * 即当前活跃帧（active frame）。
+     * 当前活跃帧（active frame）：host=本色陪聊（默认）/ law=法学 / cocreation=需求共创。
+     * Host 路由裁决结果随消息落会话；共创访谈激活状态由「活跃帧=cocreation + 快照未定稿」推断，
+     * 无独立开关字段（旧 discoveryActive/design_mode 列已随共创领域化退役，存量列停用）。
      */
     @Column(nullable = false, length = 16)
     private String mode = "host";
@@ -64,7 +53,8 @@ public class IdeaSessionEntity {
      * 会话种类：MAIN=主会话 / FORGE=造物线会话（身外身）。
      * 历史面板只列 MAIN；FORGE 会话随工单 CANCELLED 归档，不手动删除。
      */
-    // 不用 columnDefinition 带 default（原因同 discoveryActive）；存量加列的 default 由一次性 DDL 保证
+    // 不用 columnDefinition 带 default（Hibernate 6.6 update 模式会把整串当列类型，对 PG 生成非法 DDL）；
+    // 存量加列的 default 由一次性 DDL 保证
     @Column(nullable = false, length = 10)
     private String kind = KIND_MAIN;
 
@@ -105,14 +95,6 @@ public class IdeaSessionEntity {
 
     public String getNickname() {
         return nickname;
-    }
-
-    public boolean isDiscoveryActive() {
-        return discoveryActive;
-    }
-
-    public void setDiscoveryActive(boolean discoveryActive) {
-        this.discoveryActive = discoveryActive;
     }
 
     public String getMode() {

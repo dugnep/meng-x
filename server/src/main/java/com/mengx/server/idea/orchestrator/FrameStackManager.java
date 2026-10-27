@@ -85,11 +85,6 @@ public class FrameStackManager {
         }
     }
 
-    /** 当前活跃通道（即 session.mode） */
-    public String getActive(IdeaSessionEntity session) {
-        return session.getMode();
-    }
-
     /** 判断某通道是否在挂起栈中 */
     public boolean isSuspended(IdeaSessionEntity session, String channel) {
         return getStack(session).contains(channel);

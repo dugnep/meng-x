@@ -18,16 +18,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 应用提案服务（Application Proposal Service）：需求发现的许可制入口。
- * 机会观察器（OpportunityObserverAgent）在主对话代理每轮收口后旁路异步判定——
+ * 应用提案服务（Application Proposal Service）：需求共创的许可制入口。
+ * 机会观察器（OpportunityObserverAgent）在 Host 直答每轮收口后旁路异步判定——
  * 不再压住 SSE done 事件，前端输入即时解锁；判定 PROPOSE 落提案表（idea_proposals），
- * 前端经 notices 轮询拿到邀请卡，用户点「聊聊看」（accept）才进入发现模式：
- * CAS PENDING→ACCEPTED + discoveryActive=true + 固定开场白秒回（零模型调用）。
+ * 前端经 notices 轮询拿到邀请卡，用户点「聊聊看」（accept）后 CAS PENDING→ACCEPTED，
+ * 前端随即以 mode=cocreation 自动发出首轮发言，经 Host 路由进共创领域开始访谈。
  * 提案四要素不在此刻推演——用户首轮发言时经 undigestedProposalContext 注入推演背景，
  * 由共创推演官同步消化成第一版快照（用户开口才是推演有新信息的时机）。
  * 单提议原则：新提案落库前把既有 PENDING 置 SUPERSEDED；
  * 静默归档：PENDING 提案后累计 2 条新用户消息无响应 → DISMISSED。
- * EXIT 判定（发现模式下用户想结束访谈）应用前经代际校验，过期丢弃。
+ * EXIT 判定（共创访谈中用户想结束访谈）应用前经代际校验，过期丢弃。
  * 本类只做编排（观察接线、提案状态机、通知组装）；prompt 与模型调用归 idea.agent 包。
  */
 @Service
@@ -39,6 +39,9 @@ public class IdeaProposalService {
     public static final String OK = "OK";
     public static final String NOT_FOUND = "NOT_FOUND";
     public static final String CONFLICT = "CONFLICT";
+
+    /** 共创领域通道名（与 CoCreationService.CHANNEL 同值；自建常量避免与其循环依赖） */
+    private static final String CHANNEL_COCREATION = "cocreation";
 
     /** 观察器回看的最近对话条数（不含本轮消息） */
     private static final int OBSERVER_DIALOG_WINDOW = 6;
@@ -56,6 +59,7 @@ public class IdeaProposalService {
     private final IdeaMessageRepository messageRepository;
     private final ChannelRegistry channelRegistry;
     private final DiscoveryEpochGuard epochGuard;
+    private final DiscoveryService discoveryService;
 
     /** 机会观察专用池：秒级阻塞判定，独立于造物线线程池 */
     private final ExecutorService observerPool = Executors.newFixedThreadPool(2, r -> {
@@ -71,7 +75,8 @@ public class IdeaProposalService {
             IdeaCardRepository cardRepository,
             IdeaMessageRepository messageRepository,
             ChannelRegistry channelRegistry,
-            DiscoveryEpochGuard epochGuard) {
+            DiscoveryEpochGuard epochGuard,
+            DiscoveryService discoveryService) {
         this.agents = agents;
         this.proposalRepository = proposalRepository;
         this.sessionRepository = sessionRepository;
@@ -79,6 +84,7 @@ public class IdeaProposalService {
         this.messageRepository = messageRepository;
         this.channelRegistry = channelRegistry;
         this.epochGuard = epochGuard;
+        this.discoveryService = discoveryService;
     }
 
     @PreDestroy
@@ -89,7 +95,7 @@ public class IdeaProposalService {
     // ==================== 旁路观察 ====================
 
     /**
-     * 旁路机会观察：主对话代理收口（done 已发、输入已解锁）后异步执行，
+     * 旁路机会观察：Host 直答收口（done 已发、输入已解锁）后异步执行，
      * 不阻塞任何用户可感知路径。历史与回复在提交线程提取快照，任务内重读会话取最新状态。
      */
     public void observeAsync(IdeaSessionEntity session, List<IdeaChatService.InMessage> history,
@@ -117,7 +123,10 @@ public class IdeaProposalService {
             if (session == null) {
                 return;
             }
-            boolean discovery = session.isDiscoveryActive();
+            // 共创访谈进行中 = 活跃帧为 cocreation，或最新推演未定稿且在热窗内
+            // （后者覆盖访谈刚被 Host 直答逃逸、活跃帧已切回 host 的自愈场景）
+            boolean discovery = CHANNEL_COCREATION.equals(session.getMode())
+                    || discoveryService.interviewHot(sessionId);
             Observation obs = observeWithRetry(sessionId, discovery, userMessage, hostReply, dialog);
             if (obs == null) {
                 log.warn("机会观察两次尝试均失败（sessionId={}，epoch={}）", sessionId, turnEpoch);
@@ -183,17 +192,17 @@ public class IdeaProposalService {
         return null;
     }
 
-    /** EXIT 应用：仅当代际未变（用户没发新一轮）且发现模式仍开启时关班，防过期误关 */
+    /** EXIT 应用：仅当代际未变（用户没发新一轮）且共创帧仍活跃时切回 host 帧，防过期误关 */
     private void applyExit(IdeaSessionEntity session, int turnEpoch) {
         Long sessionId = session.getId();
         if (!epochGuard.isCurrent(sessionId, turnEpoch)) {
             log.info("机会观察 EXIT 已过期，丢弃（sessionId={}，epoch={}）", sessionId, turnEpoch);
             return;
         }
-        if (session.isDiscoveryActive()) {
-            session.setDiscoveryActive(false);
+        if (CHANNEL_COCREATION.equals(session.getMode())) {
+            session.setMode(ChannelRegistry.DEFAULT_CHANNEL);
             sessionRepository.save(session);
-            log.info("机会观察判定 EXIT：退出发现模式（sessionId={}，epoch={}）", sessionId, turnEpoch);
+            log.info("机会观察判定 EXIT：退出共创访谈（sessionId={}，epoch={}）", sessionId, turnEpoch);
         }
     }
 
@@ -212,10 +221,16 @@ public class IdeaProposalService {
             log.info("机会观察判 PROPOSE 但标题为空，不落提案（sessionId={}）", sessionId);
             return;
         }
-        // 二次校验：观察期间用户可能已许可别的提案进入发现模式
+        // 二次校验：观察期间用户可能已许可别的提案进入共创访谈
         IdeaSessionEntity fresh = sessionRepository.findById(sessionId).orElse(null);
-        if (fresh == null || fresh.isDiscoveryActive()) {
-            log.info("机会观察判 PROPOSE 但发现模式已开启，提案丢弃（sessionId={}）", sessionId);
+        if (fresh == null || CHANNEL_COCREATION.equals(fresh.getMode())) {
+            log.info("机会观察判 PROPOSE 但共创访谈进行中，提案丢弃（sessionId={}）", sessionId);
+            return;
+        }
+        // 访谈热窗闸门：最新推演未定稿且在热窗内——访谈仍在进行（含刚被 Host 逃逸待拉回），不重复提案
+        if (discoveryService.interviewHot(sessionId)) {
+            log.info("机会观察判 PROPOSE 但共创访谈仍在进行（或刚被逃逸待拉回），提案丢弃（sessionId={}）",
+                    sessionId);
             return;
         }
         IdeaProposalEntity proposal = proposalRepository.save(new IdeaProposalEntity(
@@ -295,37 +310,25 @@ public class IdeaProposalService {
     // ==================== 许可 / 拒绝 / 通知 ====================
 
     /** 许可结果（outcome 取 {@link #OK}/{@link #NOT_FOUND}/{@link #CONFLICT}） */
-    public record ProposalResult(String outcome, String opening) {}
-
-    /** 许可开班的固定开场白（零模型调用；落库保留记录，前端随响应展示） */
-    private static final String ACCEPT_OPENING =
-            "好，这个想法老朽记下了。咱们这就把它当成一座新道场来好好谋划——先从头说起："
-                    + "你最想让它替谁、解个什么难处？";
+    public record ProposalResult(String outcome) {}
 
     /**
-     * 许可开班：CAS PENDING→ACCEPTED → 会话进入发现模式 → 固定开场白落库秒回（零模型调用）。
+     * 许可提案：CAS PENDING→ACCEPTED，仅做状态裁决——不动会话、不落消息。
+     * 首轮发言由前端以 mode=cocreation 自动发出（路由三态的最强提示），经 Host 进共创领域；
      * 不在此刻推演：提案四要素待用户首轮发言时经 {@link #undigestedProposalContext} 注入推演背景。
      */
     @Transactional
     public ProposalResult accept(Long userId, Long proposalId) {
         IdeaProposalEntity proposal = proposalRepository.findByIdAndUserId(proposalId, userId).orElse(null);
         if (proposal == null) {
-            return new ProposalResult(NOT_FOUND, null);
+            return new ProposalResult(NOT_FOUND);
         }
         if (proposalRepository.casAccept(proposalId, Instant.now()) == 0) {
-            return new ProposalResult(CONFLICT, null);
+            return new ProposalResult(CONFLICT);
         }
-        IdeaSessionEntity session = sessionRepository.findById(proposal.getSessionId()).orElse(null);
-        if (session != null) {
-            if (!session.isDiscoveryActive()) {
-                session.setDiscoveryActive(true);
-                sessionRepository.save(session);
-            }
-            messageRepository.save(new IdeaMessageEntity(session.getId(), "assistant", ACCEPT_OPENING, "host", null));
-        }
-        log.info("应用提案已许可开班（sessionId={}，proposalId={}）",
+        log.info("应用提案已许可，共创首轮由前端以 cocreation 模式发起（sessionId={}，proposalId={}）",
                 proposal.getSessionId(), proposalId);
-        return new ProposalResult(OK, ACCEPT_OPENING);
+        return new ProposalResult(OK);
     }
 
     /** 拒绝提案：CAS PENDING→DISMISSED（用户主动拒绝） */
@@ -392,7 +395,7 @@ public class IdeaProposalService {
     }
 
     /**
-     * 未消化的已许可提案要素（发现模式推演背景注入）：
+     * 未消化的已许可提案要素（共创访谈首轮推演背景注入）：
      * 最新 ACCEPTED 提案许可后尚无推演存档（counsel 行）时返回要素文本，否则 null。
      * 供用户首轮发言的同步推演携带——共创推演官把它连同用户回答一起画进第一版快照。
      */
@@ -423,7 +426,7 @@ public class IdeaProposalService {
     /** 已实装能力清单：路由注册表各通道职责 + 基础服务（观察器 Q1 判定输入） */
     public String capabilityRoster() {
         StringBuilder sb = new StringBuilder(
-                "- 主对话代理（默认通道）：日常问答与闲聊、创意访谈与功能卡流转\n");
+                "- 主对话代理（默认通道）：日常问答与闲聊，及其余话题的接待与分发\n");
         for (ChannelSpec spec : channelRegistry.all()) {
             if (ChannelRegistry.DEFAULT_CHANNEL.equals(spec.id())) {
                 continue;

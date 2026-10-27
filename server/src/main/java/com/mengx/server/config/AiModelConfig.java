@@ -3,11 +3,11 @@ package com.mengx.server.config;
 import com.mengx.server.llm.ConcurrencyGuardedStreamingModel;
 import com.mengx.server.llm.ZhipuUsageListener;
 import dev.langchain4j.community.model.zhipu.ZhipuAiChatModel;
-import dev.langchain4j.community.model.zhipu.ZhipuAiStreamingChatModel;
 import dev.langchain4j.community.model.zhipu.chat.Thinking;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import java.time.Duration;
 import java.util.List;
 import org.slf4j.Logger;
@@ -19,12 +19,13 @@ import org.springframework.context.annotation.Primary;
 
 /**
  * 智谱 GLM 模型配置（langchain4j 官方社区集成 langchain4j-community-zhipu-ai）：
- * agent 档走 langchain4j-open-ai 客户端 + 智谱 OpenAI 兼容端点（同一 api-key）：
+ * host/agent 档走 langchain4j-open-ai 客户端 + 智谱 OpenAI 兼容端点（同一 api-key）：
  * glm-5.3-flash 为强制思考模型（thinking.type 仅 enabled 合法），思考强度经顶层参数
- * reasoning_effort 控制（low/high/max），zhipu-ai 社区模块不支持该参数故换道 open-ai 客户端；
- * host/route 档（glm-4-flash 非思考）沿用 zhipu 客户端传 thinking disabled 兼容。
+ * reasoning_effort 控制（low/high/max），zhipu-ai 社区模块不支持该参数故换道 open-ai 客户端
+ * （host 档换道另有原因：glm-4-flash 免费档无视注入的路由指令，153 同 payload 四连逃逸定案弃用）；
+ * route 档（glm-4-flash 非思考）沿用 zhipu 客户端传 thinking disabled 兼容。
  * 三档分工：
- * 流式档（StreamingChatModel）= 前台主对话代理/法学助手，角色扮演；
+ * 流式档（StreamingChatModel）= 前台主对话 Host（路由+直答）、法学助手、共创领域顾问；
  * 同步档（ChatModel，@Primary）= 内部结构化 agent（需求澄清双官/观察器/装配器/PRD 格式化器）；
  * 路由档（ChatModel "routeChatModel"）= 意图路由等轻量二分类。
  * 重试：同步档 maxRetries=2（限流/网络故障退避重试一次）；流式档沿用官方默认
@@ -52,12 +53,12 @@ public class AiModelConfig {
     @Value("${ai.model.host-max-tokens:2048}")
     private Integer hostMaxTokens;
 
-    /** 思考力度：非思考模型传 disabled；强制思考模型（5.3-flash）仅 enabled 可用 */
-    @Value("${ai.model.host-thinking:disabled}")
-    private String hostThinking;
+    /** 思考强度（host 档 5.3-flash 强制思考，reasoning_effort 降档省 token）：low/high/max */
+    @Value("${ai.model.host-reasoning-effort:}")
+    private String hostReasoningEffort;
 
     /**
-     * host 流式并发闸：glm-4-flash 智谱并发上限 20 路，流式请求自发出至流结束全程占一路；
+     * host 流式并发闸：流式请求自发出至流结束全程占一路；
      * 闸 15 路内直通、超出排队（多用户高峰优雅降级），留 5 路余量给路由档与流式首响重试
      */
     @Value("${ai.model.host-concurrency-permits:15}")
@@ -124,27 +125,35 @@ public class AiModelConfig {
         return url + "/";
     }
 
-    /** 流式聊天模型（主对话代理/法学助手对话主链路），外包并发闸防多用户高峰打爆智谱配额 */
+    /**
+     * 流式模型（主对话 Host 路由/直答、法学助手、共创领域顾问），外包并发闸防多用户高峰打爆智谱配额。
+     * 走 langchain4j-open-ai 客户端 + 智谱 OpenAI 兼容端点（同 api-key），与 agent 档同模式：
+     * host 档 glm-5.3-flash 为强制思考模型，reasoning_effort 是思考强度唯一控制途径
+     * （zhipu-ai 社区模块不支持该参数）；OpenAI 客户端不发 thinking 字段，服务端默认
+     * 开启思考，行为与显式 enabled 等价。流式 tool_calls 走 onCompleteToolCall、
+     * 思考增量走 onPartialThinking（langchain4j-open-ai 1.18 实测支持，正文不受污染）。
+     */
     @Bean
     public StreamingChatModel streamingChatModel() {
         if (!configured()) {
             log.warn("ai.model.api-key 未配置，跳过流式模型初始化（对话接口不可用）");
             return null;
         }
-        log.info("初始化流式模型（主对话/法学）: model={}, temperature={}, thinking={}, 并发闸={}路/排队{}s",
-                hostName, hostTemperature, hostThinking, hostConcurrencyPermits, hostAcquireTimeoutSeconds);
-        ZhipuAiStreamingChatModel raw = ZhipuAiStreamingChatModel.builder()
-                .baseUrl(rootBaseUrl())
+        log.info("初始化流式模型（主对话/法学/共创顾问，OpenAI 兼容端点）: model={}, temperature={}, reasoning_effort={}, 并发闸={}路/排队{}s",
+                hostName, hostTemperature, hostReasoningEffort, hostConcurrencyPermits, hostAcquireTimeoutSeconds);
+        OpenAiStreamingChatModel.OpenAiStreamingChatModelBuilder builder = OpenAiStreamingChatModel.builder()
+                .baseUrl(rootBaseUrl() + "api/paas/v4/")
                 .apiKey(apiKey)
-                .model(hostName)
+                .modelName(hostName)
                 .temperature(hostTemperature)
-                .maxToken(hostMaxTokens)
-                .thinking(thinking(hostThinking))
-                .callTimeout(Duration.ofSeconds(timeoutSeconds))
-                .connectTimeout(Duration.ofSeconds(15))
-                .listeners(List.of(new ZhipuUsageListener(true)))
-                .build();
-        return new ConcurrencyGuardedStreamingModel(raw, hostConcurrencyPermits, hostAcquireTimeoutSeconds);
+                .maxTokens(hostMaxTokens)
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .listeners(List.of(new ZhipuUsageListener(true)));
+        if (hostReasoningEffort != null && !hostReasoningEffort.isBlank()) {
+            builder.reasoningEffort(hostReasoningEffort);
+        }
+        return new ConcurrencyGuardedStreamingModel(builder.build(),
+                hostConcurrencyPermits, hostAcquireTimeoutSeconds);
     }
 
     /**

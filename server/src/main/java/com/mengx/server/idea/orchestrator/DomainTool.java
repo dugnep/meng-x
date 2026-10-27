@@ -29,6 +29,18 @@ public interface DomainTool {
     String parametersSchema();
 
     /**
+     * 本轮是否对 Host 可见（HostWorker 组装工具列表前过滤）。
+     * 默认始终可见；需要许可制入口的领域（如共创：经邀请卡许可或访谈进行中才可进）
+     * 覆写本方法做状态硬控——不可见时工具不进 function calling 列表，
+     * Host 无从调用，物理排除而非概率服从。
+     *
+     * @param session 当前会话
+     */
+    default boolean availableFor(IdeaSessionEntity session) {
+        return true;
+    }
+
+    /**
      * 执行领域能力，流式输出到 sink。
      * 实现方必须保证最终发出 DONE 或 ERROR 事件并 complete sink。
      *
