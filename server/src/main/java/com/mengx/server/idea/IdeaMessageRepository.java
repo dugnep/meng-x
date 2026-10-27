@@ -22,6 +22,10 @@ public interface IdeaMessageRepository extends JpaRepository<IdeaMessageEntity, 
     /** Host 帧上下文窗口：某场次最近 N 条对话轮（全通道、不限帧），倒序取再反转即时间正序 */
     List<IdeaMessageEntity> findTop40BySessionIdAndRoleInOrderByIdDesc(Long sessionId, Collection<String> roles);
 
+    /** 单通道帧上下文窗口：某通道最近 N 条对话轮（分帧隔离取数），倒序取再反转即时间正序 */
+    List<IdeaMessageEntity> findTop40BySessionIdAndProducerChannelAndRoleInOrderByIdDesc(
+            Long sessionId, String producerChannel, Collection<String> roles);
+
     /**
      * 某场次指定角色 + 指定通道的消息（分帧隔离：Agent 只取本通道消息，不带通道标签的不进帧）。
      * 存量未打标数据（producer_channel IS NULL）须先执行迁移打标：

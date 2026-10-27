@@ -70,7 +70,7 @@ async function consumeSse(resp, onEvent) {
 
 /**
  * 百晓通流式访谈：POST /api/idea/chat/stream（JWT）
- * mode：host=仙官本色 / law=法学助手（消息级路由）
+ * mode：host=仙官本色 / law=法学助手 / cocreation=需求共创访谈（消息级路由）
  * greet：true=法学助手出场触发（无用户消息，由后端注入触发指令，开场白不落 user 行）
  * clientRoundId：一轮对话的幂等键，同键重发后端只落库一次（greet 出场不传）
  * 事件 {type, content}：thinking 掐指一算中 | chunk 增量文本 | card 功能卡 DTO JSON | done 结束 | error 失败

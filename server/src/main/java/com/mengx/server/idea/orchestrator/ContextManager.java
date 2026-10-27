@@ -9,8 +9,8 @@ import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
- * 上下文管理：Host 帧上下文统一从服务端取数（真源在 idea_messages，不信前端回传），
- * 并提供 history → ChatTurn 转换、取最近用户消息等小工具。
+ * 上下文管理：帧上下文统一从服务端取数（真源在 idea_messages，不信前端回传），
+ * 提供 Host 全通道窗口、单通道帧窗口、取最近用户消息等小工具。
  */
 @Component
 public class ContextManager {
@@ -40,6 +40,23 @@ public class ContextManager {
         return frame;
     }
 
+    /**
+     * 单通道帧上下文（服务端真源）：指定通道最近 40 条对话轮（user/assistant，分帧隔离），
+     * 按时间正序返回。供 Host 侧旁路取本帧历史（如机会观察器只评估 host 帧流量，
+     * 领域轮与领域上下文不进评估）。
+     */
+    public List<InMessage> loadChannelFrame(Long sessionId, String channel) {
+        List<IdeaMessageEntity> rows = messageRepository
+                .findTop40BySessionIdAndProducerChannelAndRoleInOrderByIdDesc(
+                        sessionId, channel, List.of(ROLE_USER, ROLE_ASSISTANT));
+        Collections.reverse(rows);
+        List<InMessage> frame = new ArrayList<>(rows.size());
+        for (IdeaMessageEntity row : rows) {
+            frame.add(new InMessage(row.getRole(), row.getContent()));
+        }
+        return frame;
+    }
+
     /** 取 history 中最后一条 user 消息文本（无或空内容返回空串） */
     public String latestUserText(List<InMessage> history) {
         for (int i = history.size() - 1; i >= 0; i--) {
@@ -49,14 +66,5 @@ public class ContextManager {
             }
         }
         return "";
-    }
-
-    /** InMessage → ChatTurn 转换 */
-    public List<WorkerContext.ChatTurn> toChatTurns(List<InMessage> history) {
-        List<WorkerContext.ChatTurn> turns = new ArrayList<>(history.size());
-        for (InMessage m : history) {
-            turns.add(new WorkerContext.ChatTurn(m.role(), m.content()));
-        }
-        return turns;
     }
 }

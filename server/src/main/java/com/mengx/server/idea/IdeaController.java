@@ -176,14 +176,14 @@ public class IdeaController {
     }
 
     /**
-     * 许可应用提案开班（用户点「聊聊看」）：CAS PENDING→ACCEPTED + 会话进入发现模式 +
-     * 固定开场白落库 + 异步触发首轮双官推演。返回开场白文本由前端直接展示为气泡。
+     * 许可应用提案（用户点「聊聊看」）：CAS PENDING→ACCEPTED，仅做状态裁决。
+     * 首轮发言由前端以 mode=cocreation 自动发出（路由三态最强提示），经 Host 进共创领域开始访谈。
      */
     @PostMapping("/proposals/{id}/accept")
     public ResponseEntity<?> acceptProposal(Authentication auth, @PathVariable Long id) {
         IdeaProposalService.ProposalResult result = proposalService.accept(userId(auth), id);
         return switch (result.outcome()) {
-            case IdeaProposalService.OK -> ResponseEntity.ok(Map.of("opening", result.opening()));
+            case IdeaProposalService.OK -> ResponseEntity.ok().body(Map.of());
             case IdeaProposalService.NOT_FOUND ->
                     ResponseEntity.status(404).body(Map.of("message", "提案不存在"));
             default -> ResponseEntity.status(409).body(Map.of("message", "提案已被处理过"));

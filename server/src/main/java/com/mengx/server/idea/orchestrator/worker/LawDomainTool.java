@@ -41,7 +41,7 @@ public class LawDomainTool implements DomainTool {
     private static final String ROLE_USER = "user";
     private static final String ROLE_ASSISTANT = "assistant";
     private static final int FRAME_WINDOW = 40;
-    /** 法学免责声明（随正文流式下发并落库，替代旧 OutputWrapper 的领域框匹配注入） */
+    /** 法学免责声明（随正文流式下发并落库） */
     private static final String DISCLAIMER =
             "\n\n📌 以上内容仅供学习参考，不构成法律意见。具体法律问题请咨询专业律师。";
 

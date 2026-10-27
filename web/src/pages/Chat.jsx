@@ -370,18 +370,15 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     }, 8000);
   }
 
-  /** 接下提案：许可后端进入发现模式，开场白气泡即时展示（零模型调用秒回）；
-   *  营造图待用户首轮发言、推演官同步产出第一版快照时当轮点亮（accept 时无新信息不推演） */
+  /** 接下提案：许可后自动以共创模式发起首轮发言（对称法学浮框的消息级路由），
+   *  Host 收到 cocreation 强提示路由进共创领域，推演官同步产出第一版快照点亮营造图 */
   async function acceptProposal() {
     if (!proposal || !session) return;
     const { id } = proposal;
     try {
-      const data = await api(`/api/idea/proposals/${id}/accept`, { method: 'POST' });
+      await api(`/api/idea/proposals/${id}/accept`, { method: 'POST' });
       setProposal(null);
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: data?.opening || '好，那这个点子咱们摊开来聊——先说说你想拿它做什么？' },
-      ]);
+      await sendVia('cocreation', '我想把刚才那个想法好好梳理一下');
     } catch (err) {
       setProposal(null);
       alert(err.message);
@@ -408,7 +405,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     setInput('');
     setDesignOptions([]); // 用户发送任一消息即清空选项，等新 design 事件再刷新
     setSending(true);
-    setMode(targetMode); // 本条消息的通道：law=请法学助手答，答完回落仙官
+    setMode(targetMode); // 本条消息的通道：law=请法学助手答 / cocreation=进需求共创访谈（快照定稿前强路由留在共创）
     setMessages((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '' }]);
     // 一轮一个幂等键：网络重发/双击重试用同一键，后端只落库一次（secure context 用 UUID，旧环境降级随机串）
     const clientRoundId = (typeof crypto !== 'undefined' && crypto.randomUUID)

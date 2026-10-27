@@ -63,7 +63,9 @@ public interface CoCreationAgent {
             【收口】核心三要素全部画实（functions/effects/approach 都不是「待聊」）且没有阻塞性未决\
             （decisions 为空、keyItems 没有挡路的 open 项）时，closing=true；\
             closing 首次变 true 的这一轮，question 给收口确认问法（请主持人复述要点并问"这样定下来可以吗"）。\
-            客人本轮明确点头同意定稿（"可以""确认""就这样定"）→ closingConfirmed=true，快照照抄不动，整体输出从简。\
+            仅当客人对主持人复述的整份定稿要点明确点头（"就这样定""确认，定稿吧"这类针对整体方案的表态）\
+            → closingConfirmed=true，快照照抄不动，整体输出从简；只对单个维度或选项的认可\
+            （如"可以，就用这个""对，没错"）不是定稿确认，按正常推进或 ack 处理。\
             客人想定稿但要素仍有缺 → closing 保持 false，question 自然问缺的那一处。\
             客人本轮只是纯附和确认某个维度、没有新内容也不是定稿确认 → ack=true，快照原样照抄。
 
@@ -74,6 +76,8 @@ public interface CoCreationAgent {
 
             validity 本轮无判定时输出 null；decisions、keyItems、options 没有时输出空数组；\
             snapshot 内各字段没聊到的写「待聊」，数组每项一个完整要点。
+            收尾前必须核对括号配对：所有 [] 与 {} 从内到外逐层闭合，\
+            整个输出的最后一个字符必须是闭合根对象的那个 }，严禁用 ] 闭合对象或缺尾巴收尾。
             """)
     @UserMessage("""
             【上一版快照与状态】（上一轮存档；空白即第一次推演）

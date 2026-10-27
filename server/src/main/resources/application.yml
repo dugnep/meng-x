@@ -36,30 +36,28 @@ mengx:
     embedding-dimension: 1024
     embedding-base-url: ${MENGX_EMBEDDING_BASE_URL:https://maas.qianwenaiapi.com/compatible-mode/v1}
     embedding-api-key: ${MENGX_EMBEDDING_API_KEY:}
-# 智谱 GLM（langchain4j 官方社区客户端，thinking 一律 disabled——glm-4.7 为思考型模型，
-# 默认思考首 token 延迟 30~40 秒）。api-key 不入库：
+# 智谱 GLM。api-key 不入库：
 # 本地开发 → src/main/resources/application-local.yml（已 gitignore，spring.config.import 自动加载）
 # 生产   → 服务器 /opt/meng-x/meng-x.env 的 MENGX_LLM_API_KEY
 ai:
   model:
-    # 官方客户端在主机根后自行拼接 api/paas/v4/...，base-url 只填主机根
+    # zhipu 官方客户端在主机根后自行拼接 api/paas/v4/...，base-url 只填主机根；
+    # open-ai 兼容客户端（host/agent 档）需完整端点，由 AiModelConfig 拼接
     base-url: https://open.bigmodel.cn/
     api-key: ${MENGX_LLM_API_KEY:}
-    # 三档分工：host=前台主对话/法学助手（流式角色扮演）；agent=内部结构化（共创推演/观察器/装配器/PRD 格式化器）；
-    # route=意图路由等轻量二分类。
-    # host 用 glm-4-flash（免费档）：Host 职责已瘦身为转述+闲聊+专业问答，指令遵循压力小；
-    # agent 用 glm-5.3-Flash（付费资源包）：推演/装配/法学出题批改等复杂结构化任务吃质量
-    # thinking 分档（2026-10 实测智谱 v4 端点 + 官方文档）：glm-5.3-flash 为强制思考模型，
-    # thinking.type 仅 enabled 合法；思考强度经顶层参数 reasoning_effort 控制（low/high/max，
-    # 默认 max 一句闲聊思考数百 token、low 实测降至几十~两百），zhipu-ai 客户端不支持该参数，
-    # agent 档经 langchain4j-open-ai 走智谱 OpenAI 兼容端点（同 key）传递；
-    # host/route 的 4-flash 传 disabled 兼容。思考 token 计入 completion，agent 档 max-tokens 8192 防截断
-    host-name: glm-4-flash
+    # 三档分工：host=前台主对话（Host function calling 路由 + 直答；法学助手/共创顾问共用流式档）；
+    # agent=内部结构化（共创推演/观察器/装配器/PRD 格式化器）；route=意图路由等轻量二分类。
+    # host 用 glm-5.3-flash：glm-4-flash 免费档实测无视注入的路由指令（session 153 同 payload
+    # 四连逃逸直答），5.3-flash 重放四连服从；host/agent 均为强制思考模型，经 langchain4j-open-ai
+    # 走智谱 OpenAI 兼容端点（同 key），思考强度 reasoning_effort 降档（low 实测 FC 决策轮
+    # 仅思考 ~5 token）；route 档 4-flash 非思考，沿用 zhipu 客户端。
+    # 思考 token 计入 completion，host/agent 档 max-tokens 留足防截断
+    host-name: glm-5.3-flash
     host-temperature: 0.7
-    host-max-tokens: 2048
-    host-thinking: disabled
-    # host 流式并发闸：glm-4-flash 智谱并发上限 20 路，流式请求自发出至流结束全程占一路；
-    # 15 路内直通、超出排队（多用户高峰下排队等待优于直接 429 空回复），留 5 路给路由档与重试
+    host-max-tokens: 4096
+    host-reasoning-effort: low
+    # host 流式并发闸：流式请求自发出至流结束全程占一路；15 路内直通、超出排队
+    # （多用户高峰下排队等待优于直接 429 空回复），留 5 路给路由档与重试
     host-concurrency-permits: 15
     host-acquire-timeout-seconds: 60
     agent-name: glm-5.3-flash
