@@ -31,8 +31,8 @@ export default function Login({ onLogin }) {
   return (
     <div className="page">
       <div className="moon" />
-      <h1 className="title">点子铺</h1>
-      <p className="slogan">聊着聊着，好点子就长成真功能</p>
+      <h1 className="title">点石</h1>
+      <p className="slogan">把想法做成能用的功能，产品在对话中自我迭代</p>
       <form className="login-card" onSubmit={handleSubmit}>
         <input
           type="tel"
@@ -51,7 +51,7 @@ export default function Login({ onLogin }) {
         />
         {error && <p className="login-error">{error}</p>}
         <button type="submit" disabled={submitting}>
-          {submitting ? '登录中…' : '进入点子铺'}
+          {submitting ? '登录中…' : '进入点石'}
         </button>
         <p className="login-hint">没有账号？输入手机号和密码会自动创建</p>
       </form>

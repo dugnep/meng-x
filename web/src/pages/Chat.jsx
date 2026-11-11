@@ -17,16 +17,17 @@ const AssistantText = memo(function AssistantText({ text }) {
   );
 });
 
-/** keyItems 类型 → 标签样式类（诉求/疑问/问题） */
+/** keyItems/keyLog 类型 → 标签样式类（诉求/疑问/问题） */
 const KEYITEM_TAG = { 诉求: 'ask', 疑问: 'q', 问题: 'issue' };
 
-/** 值为「待聊」= 还没聊到（渲染置灰）；空串同义 */
-const isPendingText = (text) => text === '' || text === '待聊' || text === '（待聊）';
+/** 值为「待聊」/「待澄清」= 还没聊到（渲染置灰）；空串同义 */
+const isPendingText = (text) =>
+  text === '' || text === '待聊' || text === '（待聊）' || text === '待澄清' || text === '（待澄清）';
 
 /**
- * 推演存档 JSON → 营造图面板模型（新契约：核心三要素 + 动态维度 + 待处理项）；
- * 解析失败返回 null（不展示面板）。字段容错：validity/options/decisions/keyItems 可能缺失。
- * texts 为各格子文本快照，供 prevDesignTexts diff 出「本轮新更新」标记。
+ * 推演存档 JSON → 需求简报面板模型（新契约：简报各节 + 待开发线问题 + 待定分歧 + 关键留痕）；
+ * 旧契约（核心三要素 + 动态维度）走 LegacyDesignModel 兼容渲染。
+ * 解析失败返回 null（不展示面板）。texts 为各格子文本快照，供 prevTexts diff 出「本轮新更新」标记。
  */
 function toDesignModel(raw, prevTexts) {
   let data;
@@ -36,6 +37,60 @@ function toDesignModel(raw, prevTexts) {
     return null;
   }
   if (!data || typeof data !== 'object') return null;
+  return data.brief ? briefDesignModel(data, prevTexts) : legacyDesignModel(data, prevTexts);
+}
+
+/** 新契约：需求简报（用户口径，各节未聊到标「待澄清」） */
+function briefDesignModel(data, prevTexts) {
+  const brief = data.brief;
+  const texts = {};
+
+  const makeCell = (key, label, val) => {
+    const items = Array.isArray(val) ? val.filter((v) => typeof v === 'string' && v.trim()) : null;
+    const text = items ? items.join('；') : (typeof val === 'string' ? val.trim() : '');
+    texts[key] = text;
+    const pending = isPendingText(text);
+    const fresh = !pending && prevTexts && prevTexts[key] !== undefined && prevTexts[key] !== text;
+    return { key, label, text: pending ? '待澄清' : text, items: pending ? null : items, pending, fresh };
+  };
+
+  const cells = [
+    makeCell('summary', '一句话定位', brief.summary),
+    makeCell('motivation', '背景与动机', brief.motivation),
+    makeCell('wants', '用户想要', brief.wants),
+    makeCell('audience', '使用者与场景', brief.audience),
+    makeCell('expectations', '呈现与体验期望', brief.expectations),
+    makeCell('constraints', '硬性要求', brief.constraints),
+  ];
+
+  // 待定分歧（等用户表态）+ 留给开发线的问题 + 未结的关键留痕
+  const disputes = Array.isArray(brief.disputes)
+    ? brief.disputes.filter((d) => d && (d.target || d.alternative))
+    : [];
+  const openQuestions = Array.isArray(brief.openItems)
+    ? brief.openItems.filter((o) => o && o.question)
+    : [];
+  const openItems = Array.isArray(brief.keyLog)
+    ? brief.keyLog.filter((k) => k && k.status === 'open' && k.content)
+    : [];
+  const options = Array.isArray(data.options)
+    ? data.options.filter((o) => typeof o === 'string' && o.trim())
+    : [];
+
+  return {
+    focus: typeof data.focus === 'string' ? data.focus : '',
+    coreCells: [],
+    dims: cells,
+    decisions: disputes,
+    openQuestions,
+    openItems,
+    options,
+    texts,
+  };
+}
+
+/** 旧契约兼容渲染（存量推演存档：核心三要素 + 动态维度） */
+function legacyDesignModel(data, prevTexts) {
   const snap = data.snapshot || {};
   const core = snap.core || {};
   const texts = {};
@@ -49,20 +104,15 @@ function toDesignModel(raw, prevTexts) {
     return { key, label, text: pending ? '待聊' : text, items: pending ? null : items, pending, fresh };
   };
 
-  // 顶部固定核心三要素
   const coreCells = [
     makeCell('functions', '功能清单', core.functions),
     makeCell('effects', '达成判据', core.effects),
     makeCell('approach', '实现思路', core.approach),
   ];
-
-  // 动态维度：按 snapshot.dimensions 顺序渲染，数量不定
   const dims = (Array.isArray(snap.dimensions) ? snap.dimensions : []).map((d, i) => {
     const name = d?.name || `维度${i + 1}`;
     return makeCell(`dim:${name}`, name, d?.content);
   });
-
-  // 待处理区：待定态的要求（等用户表态）+ 未结的关键条目
   const decisions = Array.isArray(data.decisions)
     ? data.decisions.filter((d) => d && (d.target || d.alternative))
     : [];
@@ -78,6 +128,7 @@ function toDesignModel(raw, prevTexts) {
     coreCells,
     dims,
     decisions,
+    openQuestions: [],
     openItems,
     options,
     texts,
@@ -98,7 +149,7 @@ function ThinkingPanel({ steps, active }) {
     <div className={`think${active ? ' active' : ''}`}>
       <button type="button" className="think-head" onClick={() => setOpen((v) => !v)}>
         <span className="think-dot" />
-        <span className="think-title">{active ? '仙君推演中…' : `已推演 ${steps.length} 步`}</span>
+        <span className="think-title">{active ? '推演中…' : `已推演 ${steps.length} 步`}</span>
         <span className="think-toggle">{open ? '收起' : '展开'}</span>
       </button>
       {open && (
@@ -486,7 +537,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
     if (sending) return;
     setMessages((prev) => [
       ...prev,
-      { role: 'assistant', content: '谈股论道的道场尚在营造中——班子还在集结。待道场开张，请君来论市。' },
+      { role: 'assistant', content: '谈股论道开发中，敬请期待。' },
     ]);
   }
 
@@ -503,7 +554,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
         next[idx] = { role: 'card', card: updated, stamped: true };
         next.push({
           role: 'assistant',
-          content: `收到！「${updated.title}」已确认开工，造物线这就安排上 🎉 我们继续——下一个灵感藏在哪？`,
+          content: `收到！「${updated.title}」已确认开工，开发线开始施工 🎉 有新进展可在顶栏铃铛面板查看。`,
         });
         return next;
       });
@@ -605,9 +656,9 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
           className="fc-in-chat"
           footer={
             m.revising && !confirmed ? (
-              <p className="fc-revise-note">在下面告诉百晓通这张卡哪里要改～</p>
+              <p className="fc-revise-note">在下面告诉助理这张卡哪里要改～</p>
             ) : confirmed ? (
-              <p className="fc-confirmed-note">✓ 已确认 · 造物线已开工</p>
+              <p className="fc-confirmed-note">✓ 已确认 · 开发线已开工</p>
             ) : (
               <div className="fc-actions">
                 <button className="fc-btn-confirm" onClick={() => confirmCard(i)}>
@@ -718,7 +769,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
           {history === 'loading' ? (
             <p className="aside-empty">加载中…</p>
           ) : !history || history.length === 0 ? (
-            <p className="aside-empty">还没有聊过，快和百晓通聊聊吧～</p>
+            <p className="aside-empty">还没有聊过，快和主理助理聊聊吧～</p>
           ) : (
             history.map((item) => (
               <div
@@ -768,7 +819,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((v) => !v)}
           >
-            <span className="chat-title">百晓通</span>
+            <span className="chat-title">点石</span>
             <svg className="brand-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <polyline points="6 9 12 15 18 9" />
@@ -805,7 +856,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
         <div className="chat-col">
         {messages.length === 0 && (
           <p className="chat-empty">
-            百晓仙君在铺子里等你——什么都能聊；聊到他还没修成的本事，他会请你一起把它设计出来
+            主理助理在线——什么都能聊；聊到产品还没实现的能力，可以一起把它设计出来
           </p>
         )}
         {messages.map((m, i) =>
@@ -853,10 +904,10 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
         {/* 提案邀请卡：旁路观察器判定「值得一起造个应用」后送达，用户裁决是否开聊 */}
         {proposal && !sending && (
           <div className="proposal-card">
-            <p className="proposal-tag">百晓通瞧出了一点机缘</p>
+            <p className="proposal-tag">发现一个新功能的机会</p>
             <p className="proposal-title">「{proposal.suggestTitle}」</p>
             <p className="proposal-story">{proposal.userStory}</p>
-            <p className="proposal-gap">眼下这铺子还办不到：{proposal.gap}</p>
+            <p className="proposal-gap">眼下产品还办不到：{proposal.gap}</p>
             {proposal.signalQuote && (
               <p className="proposal-quote">你说过：「{proposal.signalQuote}」</p>
             )}
@@ -870,7 +921,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
         )}
         {showTyping && (
           <div className="bubble assistant typing">
-            {mode === 'law' ? '助教翻查典籍中…' : thinking ? '仙君掐指一算中…' : '百晓通琢磨中…'}
+            {mode === 'law' ? '法学助手检索中…' : thinking ? '思考中…' : '思考中…'}
           </div>
         )}
         {quizGroup && !quizGroup.submitted && (() => {
@@ -917,7 +968,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
         {design && (
           <section className="design-panel">
             <button className="design-head" onClick={() => setDesignOpen((v) => !v)}>
-              <span className="design-title">营造图</span>
+              <span className="design-title">需求简报</span>
               {design.focus && <span className="design-agenda">本轮聚焦：{design.focus}</span>}
               <span className="design-toggle">{designOpen ? '收起' : '展开'}</span>
             </button>
@@ -942,7 +993,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
                     </div>
                   ))}
                 </div>
-                {(design.decisions.length > 0 || design.openItems.length > 0) && (
+                {(design.decisions.length > 0 || design.openQuestions?.length > 0 || design.openItems.length > 0) && (
                   <div className="design-alerts">
                     {design.decisions.map((d, i) => (
                       <div key={i} className="design-decision">
@@ -951,6 +1002,16 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
                         {d.alternative && <p className="design-decision-alt">替代方案：{d.alternative}</p>}
                       </div>
                     ))}
+                    {design.openQuestions?.length > 0 && (
+                      <ul className="design-keyitems">
+                        {design.openQuestions.map((q, i) => (
+                          <li key={i} className="design-keyitem" title={q.why || ''}>
+                            <span className="ki-tag ki-q">待澄清</span>
+                            <span className="ki-text">{q.question}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     {design.openItems.length > 0 && (
                       <ul className="design-keyitems">
                         {design.openItems.map((k, i) => (
@@ -980,7 +1041,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
           <div
             className={`law-hint hint-stock${sending ? ' disabled' : ''}`}
             onClick={greetStock}
-            title="谈股论道 · 道场营造中"
+            title="谈股论道 · 开发中"
           >
             <span className="law-hint-badge dao">道</span>
             <span className="law-hint-text">谈股论道</span>
@@ -1011,7 +1072,7 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleComposerKey}
-            placeholder={messages.some((m) => m.revising) ? '说说这张卡想怎么改…' : '和百晓通聊聊你想要的…'}
+            placeholder={messages.some((m) => m.revising) ? '说说这张卡想怎么改…' : '说说你的想法或问题…'}
             disabled={sending}
           />
           <button type="submit" className="composer-send" disabled={sending || !input.trim()} aria-label="发送">
@@ -1030,9 +1091,9 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
       {showAlms && (
         <div className="modal-mask" onClick={() => setShowAlms(false)}>
           <div className="modal alms-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>添点香火</h3>
+            <h3>赞赏支持</h3>
             <p className="alms-text">
-              好点子落进铺子不易，施主若愿意，添点香火钱，助仙君早成正果。全凭心意，不强求。
+              把想法做成真功能不容易。如果这个产品对你有用，欢迎扫码赞赏支持——全凭心意，不强求。
             </p>
             <img className="alms-qr" src="/alms.jpg" alt="赞赏码" />
             <button className="alms-close" onClick={() => setShowAlms(false)}>
@@ -1045,10 +1106,10 @@ export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
       {thanks && (
         <div className="modal-mask" onClick={closeThanks}>
           <div className="modal thanks-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>仙君的感谢卡</h3>
+            <h3>产品感谢卡</h3>
             <p className="thanks-title">《{thanks[0].cardTitle}》</p>
             <p className="thanks-content">{thanks[0].content}</p>
-            <p className="thanks-date">点子提出于 {thanks[0].proposedAt}，如今已修成</p>
+            <p className="thanks-date">想法提出于 {thanks[0].proposedAt}，现已上线</p>
             <button className="alms-close" onClick={closeThanks}>
               {thanks.length > 1 ? '再看下一张' : '心领了'}
             </button>

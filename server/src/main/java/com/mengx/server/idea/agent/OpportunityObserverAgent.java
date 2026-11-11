@@ -54,7 +54,7 @@ public interface OpportunityObserverAgent {
             【已收录清单】（本场已定稿卡片与全站热门卡片的标题：说明）：
             {{known}}
 
-            【最近对话】（客人=用户，主持=主对话代理）：
+            【最近对话】（用户=用户，主持=主对话代理）：
             {{dialog}}
 
             【本轮用户消息】：

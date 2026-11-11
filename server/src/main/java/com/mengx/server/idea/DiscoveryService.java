@@ -17,13 +17,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * 需求澄清服务（human-in-the-loop requirements discovery loop）：
- * 共创访谈（cocreation 领域）每轮由共创推演官（CoCreation）在用户发言当轮同步推演——
- * 一次调用同时维护规格快照（核心三要素 + 动态维度，维度由需求推演、随轮累积演进）
- * 与本轮议程（聚焦点、建议问法+选项、建议方案、合理性判定、收口信号、关键项留痕）。
- * 推演结论随轮以 discovery 状态消息存档（推演输出原样 JSON，SSE design 事件当轮直发前端营造图面板）：
- * 注入共创领域顾问/喂卡片装配器统一经 renderForHost 渲染为文本。
- * 用户全程只感知共创领域顾问——推演官不发言、不露面，转述权完全归顾问。
+ * 需求预澄清服务（human-in-the-loop requirements discovery loop）：
+ * 主对话需求澄清阶段（cocreation 领域）每轮由需求预澄清员（CoCreation）在用户发言当轮
+ * 同步推演——一次调用同时维护全量需求简报（用户口径，未聊到的节标「待澄清」）
+ * 与本轮议程（聚焦点、建议问法+选项、建议方案、边界判定、移交判定、关键项留痕）。
+ * 推演结论随轮以 discovery 状态消息存档（推演输出原样 JSON，SSE design 事件当轮直发前端简报面板）：
+ * 注入领域顾问统一经 renderForHost 渲染为文本，喂卡片装配器经 renderBriefForComposer。
+ * 用户同意移交（handoffConfirmed）后由开发线（forge）子对话接管后续澄清与 PRD 产出。
+ * 用户全程只感知 Host——预澄清员不发言、不露面，转述权完全归 Host。
  * 本类只做编排（回灌截取、单官调用与退避重试、存档、渲染）；prompt 与模型调用归 idea.agent 包。
  */
 @Service
@@ -48,7 +49,7 @@ public class DiscoveryService {
 
     /**
      * 单官同步推演（普通轮约 10~15 秒、纯确认轮 3~5 秒）并立即存档，
-     * 返回状态存档原文（JSON：注入共创领域顾问经 renderForHost，SSE design 事件直发前端）。
+     * 返回状态存档原文（JSON：注入领域顾问经 renderForHost，SSE design 事件直发前端）。
      */
     public String composeAndArchive(Long sessionId, String context) {
         String stored = compose(sessionId, context);
@@ -60,13 +61,13 @@ public class DiscoveryService {
 
     /**
      * 只推演、不落库：返回状态存档原文（推演输出原样 JSON），两次尝试均失败返回 null。
-     * 上一版快照与状态（快照 + 待定决策 + 关键项 + 优先级）回灌推演官，让规格随轮累积演进；
-     * 模型异常（含 1302 限流）与输出不完整（snapshot 缺失）均 2 秒退避后重试一次。
+     * 上一版简报回灌预澄清员，让简报随轮累积演进；
+     * 模型异常（含 1302 限流）与输出不完整（brief 缺失）均 2 秒退避后重试一次。
      */
     public String compose(Long sessionId, String context) {
         long startAt = System.currentTimeMillis();
         String draftText = recapOf(latestState(sessionId));
-        LlmUsage.set("counsel"); // 用量观测：共创推演场景标记（finally 保证标记必清）
+        LlmUsage.set("counsel"); // 用量观测：需求预澄清场景标记（finally 保证标记必清）
         CoCreationTurn turn = null;
         try {
             for (int attempt = 0; attempt < 2; attempt++) {
@@ -82,16 +83,16 @@ public class DiscoveryService {
                 try {
                     reply = agents.coCreator().reason(draftText, context);
                     CoCreationTurn result = parseTurn(reply);
-                    if (result != null && result.snapshot() != null) {
+                    if (result != null && result.brief() != null) {
                         turn = result;
                         break;
                     }
-                    log.warn("共创推演输出不完整（第 {} 次，snapshot 缺失），原始输出留痕（{} 字符）：[{}]",
+                    log.warn("预澄清输出不完整（第 {} 次，brief 缺失），原始输出留痕（{} 字符）：[{}]",
                             attempt + 1, reply.length(), reply);
                 } catch (Exception e) {
-                    log.warn("共创推演调用失败（第 {} 次）：{}", attempt + 1, e.getMessage(), e);
+                    log.warn("预澄清调用失败（第 {} 次）：{}", attempt + 1, e.getMessage(), e);
                     if (reply != null) {
-                        log.warn("推演官原始输出留痕（第 {} 次，{} 字符）：[{}]", attempt + 1, reply.length(), reply);
+                        log.warn("预澄清员原始输出留痕（第 {} 次，{} 字符）：[{}]", attempt + 1, reply.length(), reply);
                     }
                 }
             }
@@ -99,16 +100,17 @@ public class DiscoveryService {
             LlmUsage.clear();
         }
         if (turn == null) {
-            log.warn("需求澄清状态生成失败（sessionId={}，单官两次均败，耗时 {}ms）",
+            log.warn("需求简报生成失败（sessionId={}，单官两次均败，耗时 {}ms）",
                     sessionId, System.currentTimeMillis() - startAt);
             return null;
         }
-        log.info("需求澄清状态生成（sessionId={}，聚焦={}，纯确认={}，收口={}，定稿确认={}，待定决策 {} 项，耗时 {}ms）",
+        log.info("需求简报生成（sessionId={}，聚焦={}，纯确认={}，移交就绪={}，移交确认={}，待开发线问题 {} 项，耗时 {}ms）",
                 sessionId, turn.focus(), Boolean.TRUE.equals(turn.ack()),
-                Boolean.TRUE.equals(turn.closing()), Boolean.TRUE.equals(turn.closingConfirmed()),
-                turn.decisions() == null ? 0 : turn.decisions().size(),
+                Boolean.TRUE.equals(turn.handoffReady()), Boolean.TRUE.equals(turn.handoffConfirmed()),
+                turn.brief() == null || turn.brief().openItems() == null
+                        ? 0 : turn.brief().openItems().size(),
                 System.currentTimeMillis() - startAt);
-        // 存档推演输出原样 JSON（SSE design 事件直发前端营造图面板）；注入共创领域顾问/喂装配器走 renderForHost
+        // 存档推演输出原样 JSON（SSE design 事件直发前端简报面板）；注入顾问/喂装配器走渲染方法
         try {
             return counselMapper.writeValueAsString(turn);
         } catch (Exception e) {
@@ -118,7 +120,7 @@ public class DiscoveryService {
     }
 
     /**
-     * 推演官原始输出 → 单轮结论：剥 markdown 围栏后容错解析（未知字段忽略、
+     * 预澄清员原始输出 → 单轮结论：剥 markdown 围栏后容错解析（未知字段忽略、
      * List 字段收字符串自动归一，见 {@link com.mengx.server.idea.agent.StringOrListDeserializer}）。
      * 解析失败先走一次尾部塌陷自愈（{@link #salvageTruncatedTail}：glm 生成长嵌套 JSON
      * 偶发尾部闭合括号错乱/缺失，finish=stop 但根对象未闭合，非截断）；自愈不过再向上抛，
@@ -126,7 +128,7 @@ public class DiscoveryService {
      */
     private CoCreationTurn parseTurn(String reply) throws Exception {
         if (reply == null || reply.isBlank()) {
-            throw new IllegalArgumentException("推演官输出为空");
+            throw new IllegalArgumentException("预澄清员输出为空");
         }
         String json = IdeaProposalService.stripFences(reply.trim());
         try {
@@ -143,8 +145,8 @@ public class DiscoveryService {
 
     /**
      * 尾部塌陷自愈：先括号账本修复成合法 JSON，再按契约重组与语义自检。
-     * 契约顶层字段（keyItems）塌陷进子对象（如 snapshot）时上提回顶层——
-     * 未知字段忽略会静默吞掉深层字段；自检不过（snapshot 缺失，或原文含关键项
+     * 契约顶层字段（keyLog）塌陷进子对象（如 brief）时上提回顶层——
+     * 未知字段忽略会静默吞掉深层字段；自检不过（brief 缺失，或原文含关键项
      * 但解析结果为空，视为修复破坏了语义）返回 null，交由上层重试。
      */
     private CoCreationTurn salvageTruncatedTail(String json) {
@@ -157,18 +159,18 @@ public class DiscoveryService {
             if (!(root instanceof ObjectNode obj)) {
                 return null;
             }
-            if (!obj.has("keyItems")) {
-                JsonNode host = obj.findParent("keyItems");
+            if (!obj.has("keyLog")) {
+                JsonNode host = obj.findParent("keyLog");
                 if (host instanceof ObjectNode hostObj) {
-                    obj.set("keyItems", hostObj.remove("keyItems"));
+                    obj.set("keyLog", hostObj.remove("keyLog"));
                 }
             }
             CoCreationTurn turn = counselMapper.treeToValue(obj, CoCreationTurn.class);
-            if (turn.snapshot() == null) {
+            if (turn.brief() == null) {
                 return null;
             }
-            boolean hadKeyItems = json.contains("\"keyItems\"");
-            if (hadKeyItems && (turn.keyItems() == null || turn.keyItems().isEmpty())) {
+            boolean hadKeyLog = json.contains("\"keyLog\"");
+            if (hadKeyLog && (turn.brief().keyLog() == null || turn.brief().keyLog().isEmpty())) {
                 return null;
             }
             return turn;
@@ -257,34 +259,54 @@ public class DiscoveryService {
         try {
             messageRepository.save(new IdeaMessageEntity(sessionId, "counsel", stored, CHANNEL_COCREATION, null));
         } catch (Exception e) {
-            log.warn("设计简报存档失败（不影响本轮回复）：{}", e.getMessage());
+            log.warn("需求简报存档失败（不影响本轮回复）：{}", e.getMessage());
         }
     }
 
-    /** 存档 → 注入共创领域顾问的简报文本（快照 + 待定决策 + 关键项 + 本轮推演结论） */
+    /** 存档 → 注入领域顾问的简报文本（简报快照 + 本轮推演结论 + 移交信号） */
     public String renderForHost(String stored) {
         CoCreationTurn turn = parse(stored);
         return turn == null ? "" : render(turn);
     }
 
-    /** 存档 → 推演官给出的优先级建议（高/中/低）；无存档或无优先级返回 null */
-    public String priorityOf(String stored) {
+    /** 存档 → 喂卡片装配器的需求简报文本（仅简报各节，不含本轮议程与移交指令） */
+    public String renderBriefForComposer(String stored) {
         CoCreationTurn turn = parse(stored);
-        return turn == null ? null : turn.priority();
+        if (turn == null || turn.brief() == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        renderBriefInto(sb, turn.brief());
+        return sb.toString().trim();
     }
 
-    /** 存档 → 用户本轮是否已明确点头同意定稿（收口状态驱动的唯一触发信号） */
-    public boolean isClosingConfirmed(String stored) {
+    /** 存档 → 用户本轮是否已明确同意移交（移交状态驱动的唯一触发信号） */
+    public boolean isHandoffConfirmed(String stored) {
         CoCreationTurn turn = parse(stored);
-        return turn != null && Boolean.TRUE.equals(turn.closingConfirmed());
+        return turn != null && Boolean.TRUE.equals(turn.handoffConfirmed());
+    }
+
+    /**
+     * 存档 → 用户本轮是否被判为与本场访谈无关的独立请求（暂挂判定）。
+     * 热窗内强制派发路径据此转 Host 直答；判不准时默认为 false（往留收）。
+     */
+    public boolean isDivertEscape(String stored) {
+        CoCreationTurn turn = parse(stored);
+        return turn != null && turn.divert() != null && Boolean.TRUE.equals(turn.divert().escape());
+    }
+
+    /** 存档 → 暂挂判定原因（注入 Host 直答提示，让 Host 知道访谈为何暂挂）；无判定返回 null */
+    public String divertReason(String stored) {
+        CoCreationTurn turn = parse(stored);
+        return turn == null || turn.divert() == null ? null : turn.divert().reason();
     }
 
     /** 访谈热窗：最新推演距此刻在该时长内视为访谈仍在进行（含刚被 Host 逃逸的自愈场景） */
     private static final long INTERVIEW_HOT_WINDOW_SECONDS = 1800;
 
     /**
-     * 访谈活跃判定：最新推演未定稿、且距此刻在热窗内——访谈进行中，
-     * 或访谈刚被 Host 直答逃逸（活跃帧已切回 host，但快照未定稿）。
+     * 访谈活跃判定：最新推演未移交确认、且距此刻在热窗内——访谈进行中，
+     * 或访谈刚被 Host 直答逃逸（活跃帧已切回 host，但简报未移交）。
      * 路由强提示（拉回共创，自愈逃逸）与提案闸门（访谈期间不重复提案）共用本判定。
      */
     public boolean interviewHot(Long sessionId) {
@@ -293,18 +315,21 @@ public class DiscoveryService {
             return false;
         }
         IdeaMessageEntity latest = rows.get(rows.size() - 1);
-        return !isClosingConfirmed(latest.getContent())
+        return !isHandoffConfirmed(latest.getContent())
                 && latest.getCreatedAt().isAfter(Instant.now().minusSeconds(INTERVIEW_HOT_WINDOW_SECONDS));
     }
 
-    /** 状态渲染为注入共创领域顾问的简报（严禁向用户暴露内部流程字眼） */
+    /** 推演结论渲染为注入领域顾问的简报（严禁向用户暴露内部流程字眼） */
     private String render(CoCreationTurn turn) {
         StringBuilder sb = new StringBuilder("""
-                【设计简报（Design Brief）·内部工作文档】仅供你参考吸收，以你自己的口吻与判断自然表达，该采纳的采纳、该保留意见的保留意见；严禁向用户提及内部流程与工作文档：
+                【需求简报（Requirement Brief）·内部工作文档】仅供你参考吸收，以你自己的口吻与判断自然表达，\
+                该采纳的采纳、该保留意见的保留意见；严禁向用户提及内部流程与工作文档：
                 """);
-        renderSnapshotInto(sb, turn);
+        if (turn.brief() != null) {
+            renderBriefInto(sb, turn.brief());
+        }
         sb.append("\n【本轮推演结论】（这一轮只推这一处，一次只推进一步；问法仅供参考，用你自己的口吻）\n");
-        sb.append("推进：").append(or(turn.focus(), "核心三要素"));
+        sb.append("推进：").append(or(turn.focus(), "需求简报"));
         if (!isBlank(turn.question())) {
             sb.append("；建议问法：").append(turn.question());
         }
@@ -313,11 +338,11 @@ public class DiscoveryService {
                     .append("（把选项自然说给用户挑，用户也可以不选、自己说）");
         }
         if (!isBlank(turn.proposal())) {
-            sb.append("\n【建议方案】当前维度可转述给用户点头：").append(turn.proposal());
+            sb.append("\n【建议方案】当前待澄清点可转述给用户点头：").append(turn.proposal());
         }
         CoCreationTurn.Validity v = turn.validity();
         if (v != null && !isBlank(v.target())) {
-            sb.append("\n【合理性判定】用户提出「").append(v.target()).append("」，判定：")
+            sb.append("\n【边界判定】用户提出「").append(v.target()).append("」，判定：")
                     .append(or(v.verdict(), "合理"));
             if (!isBlank(v.reason())) {
                 sb.append("（").append(v.reason()).append("）");
@@ -327,54 +352,55 @@ public class DiscoveryService {
                         .append("——如实转述判定与替代方案，请用户表态，不要替他决定");
             }
         }
-        if (Boolean.TRUE.equals(turn.closingConfirmed())) {
-            sb.append("\n【用户已点头定稿】用户已同意定稿——只需接一句确认，并说「我把这个想法整理成一张功能卡啦」")
-                    .append("（卡片系统会自动展示，你不要输出卡片内容），不要再追问、不要再抛新问题。\n");
-        } else if (Boolean.TRUE.equals(turn.closing())) {
-            sb.append("\n【收口信号】收口条件已满足——用几句话把核心要点复述给用户，然后问「这样定下来可以吗？还有要补的么？」\n");
+        if (Boolean.TRUE.equals(turn.handoffConfirmed())) {
+            sb.append("\n【用户已同意移交】需求澄清已完成——只需接一句确认，告知用户这个想法会交给开发线团队跟进，")
+                    .append("不要再追问、不要再抛新问题。\n");
+        } else if (Boolean.TRUE.equals(turn.handoffReady())) {
+            sb.append("\n【移交信号】意图已清楚——用几句话把简报要点复述给用户，然后问「接下来的细节交给开发线团队跟你聊，可以吗？」\n");
         } else if (Boolean.TRUE.equals(turn.ack())) {
-            sb.append("\n【纯确认轮】用户本轮发言是纯确认，快照无新增——先用一句话收格确认，随即在同一句回复里抛出下一个问题，不要再追问已确认的内容。\n");
+            sb.append("\n【纯确认轮】用户本轮发言是纯确认，简报无新增——先用一句话收格确认，随即在同一句回复里抛出下一个问题，不要再追问已确认的内容。\n");
         }
         return sb.toString().trim();
     }
 
-    /** 快照段（核心三要素 + 动态维度 + 待定决策 + 关键项）；「待聊」= 还没聊到 */
-    private void renderSnapshotInto(StringBuilder sb, CoCreationTurn turn) {
-        CoCreationTurn.Snapshot snap = turn.snapshot();
-        if (snap == null) {
-            return;
-        }
-        sb.append("\n【当前规格快照】（这个应用目前画到的样子；「待聊」就是还没聊到的，客人问进展时可按图口述）\n");
-        CoCreationTurn.Core core = snap.core();
-        if (core != null) {
-            sb.append("核心三要素：\n");
-            sb.append("- 做什么：").append(list(core.functions())).append('\n');
-            sb.append("- 怎么算成：").append(or(core.effects())).append('\n');
-            sb.append("- 实现思路：").append(or(core.approach())).append('\n');
-        }
-        if (snap.dimensions() != null && !snap.dimensions().isEmpty()) {
-            sb.append("动态维度：\n");
-            for (CoCreationTurn.Dimension d : snap.dimensions()) {
-                if (d != null && !isBlank(d.name())) {
-                    sb.append("- ").append(d.name()).append("：").append(or(d.content())).append('\n');
+    /** 需求简报段（用户口径，各节与 PRD 章节对应）；「待澄清」= 还没聊到 */
+    private void renderBriefInto(StringBuilder sb, CoCreationTurn.Brief brief) {
+        sb.append("\n【需求简报】（这个想法目前聊到的样子；「待澄清」就是还没聊到的）\n");
+        sb.append("- 一句话定位：").append(or(brief.summary())).append('\n');
+        sb.append("- 背景与动机：").append(or(brief.motivation())).append('\n');
+        sb.append("- 用户想要什么：").append(list(brief.wants())).append('\n');
+        sb.append("- 使用者与场景：").append(or(brief.audience())).append('\n');
+        sb.append("- 呈现与体验期望：").append(or(brief.expectations())).append('\n');
+        sb.append("- 硬性要求：").append(or(brief.constraints())).append('\n');
+        if (brief.openItems() != null && !brief.openItems().isEmpty()) {
+            sb.append("【留给开发线的问题】（移交后开发线据此继续澄清）\n");
+            for (CoCreationTurn.OpenItem o : brief.openItems()) {
+                if (o == null || isBlank(o.question())) {
+                    continue;
                 }
+                sb.append("- ").append(o.question());
+                if (!isBlank(o.why())) {
+                    sb.append("（为什么问：").append(o.why()).append("）");
+                }
+                sb.append('\n');
             }
         }
-        if (turn.decisions() != null && !turn.decisions().isEmpty()) {
-            sb.append("【待定决策】（被判不合理、等客人表态，还没画进快照）\n");
-            for (CoCreationTurn.Decision d : turn.decisions()) {
-                if (d != null && !isBlank(d.target())) {
-                    sb.append("- ").append(d.target());
-                    if (!isBlank(d.alternative())) {
-                        sb.append("（替代方案：").append(d.alternative()).append("）");
-                    }
-                    sb.append('\n');
+        if (brief.disputes() != null && !brief.disputes().isEmpty()) {
+            sb.append("【待定分歧】（建议过但用户未表态、或被判不合理的原主张，等用户表态）\n");
+            for (CoCreationTurn.Dispute d : brief.disputes()) {
+                if (d == null || isBlank(d.target())) {
+                    continue;
                 }
+                sb.append("- ").append(d.target());
+                if (!isBlank(d.alternative())) {
+                    sb.append("（替代方案：").append(d.alternative()).append("）");
+                }
+                sb.append('\n');
             }
         }
-        if (turn.keyItems() != null && !turn.keyItems().isEmpty()) {
+        if (brief.keyLog() != null && !brief.keyLog().isEmpty()) {
             sb.append("【关键项留痕】\n");
-            for (CoCreationTurn.KeyItem k : turn.keyItems()) {
+            for (CoCreationTurn.KeyItem k : brief.keyLog()) {
                 if (k == null || isBlank(k.content())) {
                     continue;
                 }
@@ -387,21 +413,18 @@ public class DiscoveryService {
                 sb.append('\n');
             }
         }
-        if (!isBlank(turn.priority())) {
-            sb.append("优先级建议：").append(turn.priority()).append('\n');
-        }
     }
 
-    /** 存档 → 回灌推演官的上一版快照与状态（快照 + 待定决策 + 关键项 + 优先级；议程与注入说明不回灌） */
+    /** 存档 → 回灌预澄清员的上一版简报（仅简报各节；议程与注入说明不回灌） */
     private String recapOf(String stored) {
         CoCreationTurn turn = parse(stored);
-        if (turn == null) {
-            return "（还没有规格快照——第一次推演）";
+        if (turn == null || turn.brief() == null) {
+            return "（还没有需求简报——第一次推演）";
         }
         StringBuilder sb = new StringBuilder();
-        renderSnapshotInto(sb, turn);
+        renderBriefInto(sb, turn.brief());
         String recap = sb.toString().trim();
-        return recap.isEmpty() ? "（还没有规格快照——第一次推演）" : recap;
+        return recap.isEmpty() ? "（还没有需求简报——第一次推演）" : recap;
     }
 
     /** 存档 → 推演结论；非 JSON 或解析失败返回 null */
@@ -412,7 +435,7 @@ public class DiscoveryService {
         try {
             return counselMapper.readValue(stored.trim(), CoCreationTurn.class);
         } catch (Exception e) {
-            log.warn("设计简报存档解析失败（按无状态处理）：{}", e.getMessage());
+            log.warn("需求简报存档解析失败（按无状态处理）：{}", e.getMessage());
             return null;
         }
     }
@@ -428,15 +451,15 @@ public class DiscoveryService {
     }
 
     private static String or(String s) {
-        return isBlank(s) ? "（待聊）" : s;
+        return isBlank(s) ? "（待澄清）" : s;
     }
 
     private static String or(String s, String fallback) {
         return isBlank(s) ? fallback : s;
     }
 
-    /** 数组项以分号拼接为一句（空数组视为待聊） */
+    /** 数组项以分号拼接为一句（空数组视为待澄清） */
     private static String list(List<String> items) {
-        return items == null || items.isEmpty() ? "（待聊）" : String.join("；", items);
+        return items == null || items.isEmpty() ? "（待澄清）" : String.join("；", items);
     }
 }

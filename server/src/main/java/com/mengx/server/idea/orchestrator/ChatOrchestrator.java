@@ -30,10 +30,10 @@ import reactor.core.scheduler.Schedulers;
  * 切换通道时旧帧挂起压栈（FrameStackManager），切回时按通道恢复历史。
  * 通道切换由 Host LLM 调用对应领域工具时触发（onComplete 回调中 activate）。
  *
- * <p>路由提示：访谈热窗（最新推演未定稿且 30 分钟内，自愈判定、不依赖帧指针）向 Host
- * 注入指令化路由指令，由 Host function calling 执行。host 档 glm-5.3-flash 重放实测
- * 4/4 服从注入指令（glm-4-flash 免费档无视指令四连逃逸，session 153 定案弃用）。
- * 领域内推演、定稿装配全部内聚各领域服务，编排器只做通用收口。
+ * <p>路由（V3 强制派发）：访谈热窗内或用户显式选择共创时，编排器不再依赖 Host FC 服从率
+ * （session 165 实测短答案轮 3/6 逃逸），服务端直接派发共创推演；推演判定用户本轮
+ * 与访谈无关（divert.escape）时放行 Host 直答（逃生口，判不准默认留在访谈）。
+ * 领域内推演、移交装配全部内聚各领域服务，编排器只做通用收口。
  */
 @Service
 public class ChatOrchestrator {
@@ -55,6 +55,7 @@ public class ChatOrchestrator {
     private final ContextManager contextManager;
     private final FrameStackManager frameStackManager;
     private final HostWorker hostWorker;
+    private final CoCreationService coCreationService;
 
     public ChatOrchestrator(
             ObjectProvider<StreamingChatModel> streamingModelProvider,
@@ -65,7 +66,8 @@ public class ChatOrchestrator {
             DiscoveryEpochGuard epochGuard,
             ContextManager contextManager,
             FrameStackManager frameStackManager,
-            HostWorker hostWorker) {
+            HostWorker hostWorker,
+            CoCreationService coCreationService) {
         this.streamingModelProvider = streamingModelProvider;
         this.messageRepository = messageRepository;
         this.sessionRepository = sessionRepository;
@@ -75,6 +77,7 @@ public class ChatOrchestrator {
         this.contextManager = contextManager;
         this.frameStackManager = frameStackManager;
         this.hostWorker = hostWorker;
+        this.coCreationService = coCreationService;
     }
 
     private void runQuietly(String what, Runnable action) {
@@ -152,47 +155,70 @@ public class ChatOrchestrator {
             };
 
             // 统一走 Host：由 LLM function calling 决定直答或调用领域工具。
-            // 路由提示注入（V2 机制）：host 档 glm-5.3-flash 重放实测 4/4 服从注入指令；
-            // 用户显式选择其他领域（如法学按钮）时不注入访谈指令——尊重用户意愿
+            // 例外（V3 强制派发）：访谈热窗内或用户显式选择共创时，不再依赖 Host FC 服从率
+            // （session 165 实测短答案轮 3/6 逃逸）——服务端直接派发共创推演；
+            // 推演判定用户本轮是与访谈无关的独立请求（divert.escape）时放行 Host 直答（逃生口）。
             boolean explicitOtherDomain = mode != null && !mode.isBlank()
                     && !CHANNEL_HOST.equals(mode) && !CoCreationService.CHANNEL.equals(mode);
             boolean interviewHot = !explicitOtherDomain && discoveryService.interviewHot(sessionId);
+            boolean forceCoCreation = interviewHot
+                    || (CoCreationService.CHANNEL.equals(mode)
+                        && coCreationService.licensedToEnter(sessionId));
+            if (forceCoCreation) {
+                CoCreationService.PreflightResult pre =
+                        coCreationService.preflight(session, effectiveHistory, latestUser, sink);
+                if (!pre.ready()) {
+                    return; // 模型未配置：错误事件已发、sink 已关
+                }
+                if (pre.state() != null && discoveryService.isDivertEscape(pre.state())) {
+                    log.info("访谈暂挂（sessionId={}，用户本轮输入与访谈无关）：{}",
+                            sessionId, discoveryService.divertReason(pre.state()));
+                    hostWorker.stream(session, effectiveHistory, latestUser,
+                            divertHint(discoveryService.divertReason(pre.state())), sink, callback);
+                    return;
+                }
+                try {
+                    String reply = coCreationService.interviewRound(
+                            session, effectiveHistory, latestUser, sink, pre.state());
+                    callback.onComplete(CoCreationService.CHANNEL, reply);
+                } catch (Exception e) {
+                    callback.onError(e);
+                }
+                return;
+            }
             hostWorker.stream(session, effectiveHistory, latestUser,
-                    routeHint(mode, interviewHot), sink, callback);
+                    routeHint(mode), sink, callback);
         }, FluxSink.OverflowStrategy.BUFFER)
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
     /**
-     * 路由提示（注入 Host 系统提示，V2 机制）：
+     * 路由提示（注入 Host 系统提示）：
      * ① 显式 mode（用户点领域按钮）——优先该领域；
-     * ② 访谈热窗（最新推演未定稿且 30 分钟内；自愈判定，不看帧指针——逃逸翻帧、
-     *    定稿滞留、显式绕行三种帧失效场景均覆盖）——指令化路由，措辞与重放
-     *    验证通过的 payload 一致（glm-5.3-flash 4/4 服从）；
+     * ② 访谈热窗不再走提示注入——V3 起由编排器强制派发（{@code forceCoCreation}），
+     *    逃生口为推演官 divert 判定（判不准默认留在访谈）；
      * ③ 其余——自由 function calling（无提示）。
      */
-    private String routeHint(String mode, boolean interviewHot) {
+    private String routeHint(String mode) {
         StringBuilder hint = new StringBuilder();
         if (mode != null && !mode.isBlank() && !CHANNEL_HOST.equals(mode)) {
             hint.append("\n（路由提示：用户本轮显式选择了 ").append(mode)
                     .append(" 领域，若无明确冲突请优先调用该领域的工具。）");
         }
-        if (interviewHot) {
-            hint.append("""
-
-                    # 本轮路由指令（最高优先级）
-                    一场需求共创访谈正在进行中（规格快照尚未定稿，用户此前输入多为对访谈问题的回答），\
-                    本轮输入默认也属于这场访谈：你必须调用 co_creation 工具继续访谈，不要自己作答、不要自己梳理方案。\
-                    只有当本轮输入明确提出了与本次访谈无关的全新独立请求（如查法条、出题、聊别的事）时才可离开共创处理，\
-                    并在处理后主动问一句是否回到方案讨论。拿不准时，一律调用 co_creation。""");
-        }
         return hint.toString();
+    }
+
+    /** divert 逃生提示：访谈暂挂原因 + 直答纪律（不回访谈、不梳理方案，回应后带一句回归话头） */
+    private String divertHint(String reason) {
+        return "\n（内部提示：用户本轮输入经推演判定与本场需求共创访谈无关"
+                + (reason == null || reason.isBlank() ? "" : "——" + reason.trim())
+                + "，访谈已暂挂：请直接正常回应这个请求，不要调用 co_creation，也不要自行梳理方案；"
+                + "回应之后可自然带一句「想继续聊之前那个方案的话随时说」。）";
     }
 
     private Flux<StreamEvent> greetingFlux(IdeaSessionEntity session) {
         String greeting =
-                "法学助手已候命。这厢专司法条解释、概念辨析、案例分析与备考建议——"
-                        + "阁下有法学之惑，直接发问便是，老朽自当接得住。";
+                "法学助手已就位：法条检索、案例解答、法考刷题与主观题批改，直接问即可。";
         log.info("法学助手固定开场（sessionId={}）", session.getId());
         runQuietly("开场白落库", () -> saveGreeting(session.getId(), greeting));
         // 开场白由 Host 说出（存默认通道），不预置法学活跃帧——首轮路由仍由 Host function calling 决定，

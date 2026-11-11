@@ -215,7 +215,7 @@ public class LawProfileService {
         if (!stable.isEmpty()) {
             sb.append("\n\n已稳住的：").append(String.join("、", stable)).append("。");
         }
-        sb.append("\n\n想补弱就说「继续出」，老朽会照着弱点下题；想逐条问，直接发问便是。");
+        sb.append("\n\n想补弱就说「继续出」，我会照着弱点出题；想逐条问，直接发问。");
         log.info("学情汇报（userId={}，{} 题，正确率 {}，弱点 {} 处）",
                 userId, s.total(), pct(s.accuracy()), weak.size());
         return sb.toString();

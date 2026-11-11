@@ -44,7 +44,7 @@ export default function Fortune({ onClose }) {
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal fortune-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>仙君好运签</h3>
+        <h3>每日一签</h3>
         {loading && <p className="history-empty">掐算中…</p>}
         {error && <p className="board-error">{error}</p>}
         {!loading && !fortune && !drawing && (
@@ -71,7 +71,7 @@ export default function Fortune({ onClose }) {
             <p className="fortune-text">{fortune.text}</p>
             <p className="fortune-interpret">{fortune.interpret}</p>
             {!fortune.newDraw && <p className="fortune-again">今日已抽过，明日再来～</p>}
-            <p className="fortune-lead">想让签更灵？回屋和仙君聊聊，给铺子添个功能吧</p>
+            <p className="fortune-lead">想让产品更合你的手？去和主理助理聊聊，提个新功能吧</p>
             <button className="fortune-close-btn" onClick={onClose}>
               收下这支签
             </button>

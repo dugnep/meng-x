@@ -96,7 +96,7 @@ public class AnalystRole implements ForgeAgent {
         sb.append("【功能卡】\n");
         sb.append("标题：").append(card.getTitle()).append('\n');
         sb.append("一句话：").append(card.getSummary()).append('\n');
-        sb.append("\n【营造图快照】（开工时冻结版：核心三要素 + 动态维度 + 边界兜底 + 关键项留痕，")
+        sb.append("\n【需求简报快照】（开工时冻结版：用户口径的需求简报，")
                 .append("全程以此为准，主线后续变更不追）\n")
                 .append(ctx.job().getDesignSnapshot()).append('\n');
         if (ctx.board().getProduct() != null) {
@@ -108,8 +108,8 @@ public class AnalystRole implements ForgeAgent {
                     .append("\n请针对该意见修订产品深化段。\n");
         }
         if (ctx.pendingQuestion() != null && !isBlank(ctx.answer())) {
-            sb.append("\n【客人回答】你此前问过：").append(ctx.pendingQuestion().question())
-                    .append("\n客人答（原文）：").append(ctx.answer().trim())
+            sb.append("\n【用户回答】你此前问过：").append(ctx.pendingQuestion().question())
+                    .append("\n用户答（原文）：").append(ctx.answer().trim())
                     .append("\n请结合回答修订产品深化段；该问题已定的，从 openQuestions 中移除相应条目。\n");
         }
         return sb.toString();

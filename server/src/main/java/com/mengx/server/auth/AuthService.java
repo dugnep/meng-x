@@ -34,7 +34,7 @@ public class AuthService {
                     ? Optional.of(new LoginResult(existing.get(), false))
                     : Optional.empty();
         }
-        String nickname = "点友" + phone.substring(Math.max(0, phone.length() - 4));
+        String nickname = "石友" + phone.substring(Math.max(0, phone.length() - 4));
         UserEntity created = userRepository.save(
                 new UserEntity(phone, passwordEncoder.encode(rawPassword), nickname));
         return Optional.of(new LoginResult(created, true));
