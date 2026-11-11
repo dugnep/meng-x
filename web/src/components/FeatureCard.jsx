@@ -1,5 +1,5 @@
 export const STATUS_LABELS = {
-  SPROUT: '新芽',
+  SPROUT: '待确认',
   CONFIRMED: '已确认',
   IMPLEMENTED: '已实现',
 };
@@ -13,22 +13,24 @@ export const STATUS_CLASSES = {
 /** 优先级徽标配色（高/中/低） */
 export const PRIORITY_CLASS = { 高: 'high', 中: 'mid', 低: 'low' };
 
-/** CONFIRMED 卡造物线进展文案（buildStatus → 徽章后缀） */
+/** CONFIRMED 卡开发线进展文案（buildStatus → 徽章后缀） */
 const BUILD_STATUS_TEXT = {
-  RUNNING: '造物中',
+  RUNNING: '施工中',
   WAITING_USER: '等你澄清',
   REVIEW: '待终审',
-  DONE: '施工包已出',
-  FAILED: '营造受阻',
+  DONE: '文档已出',
+  FAILED: '施工受阻',
   CANCELLED: '已搁置',
 };
 
-/** keyItems 类型 → 标签样式类（诉求/疑问/问题） */
+/** keyItems/keyLog 类型 → 标签样式类（诉求/疑问/问题） */
 const KEYITEM_TAG = { 诉求: 'ask', 疑问: 'q', 问题: 'issue' };
 
 /**
- * 功能卡展示组件（聊天页气泡与看板共用），按新契约 designJson 渲染：
- * 功能清单 / 达成判据 / 实现思路 直出；维度与关键条目折叠；
+ * 功能卡展示组件（聊天页气泡与看板共用），按 designJson 双契约渲染：
+ * - 新契约（需求简报移交件）：wants / motivation / audience / expectations / constraints 直出，
+ *   openItems（留给开发线的问题）与 disputes（待定分歧）、keyLog（关键留痕）折叠；
+ * - 旧契约（存量卡兼容）：功能清单 / 达成判据 / 实现思路直出，维度与关键条目折叠。
  * badge：附加徽章（如创意榜名次）；footer：操作区（确认并开工/状态流转等）；
  * onExport：传入则在徽章行末尾渲染导出图标按钮（文档级操作，与流转动作分行）。
  */
@@ -39,25 +41,17 @@ export default function FeatureCard({ card, badge, footer, onExport, className =
   } catch {
     design = null;
   }
-  // 「待聊」或缺失的字段视为没有（许愿池炼的卡没有设计内容）
-  const clean = (v) => (typeof v === 'string' && v.trim() && v.trim() !== '待聊' ? v : null);
-  const functions = Array.isArray(design?.functions) ? design.functions.filter((f) => clean(f)) : [];
-  const effects = clean(design?.effects);
-  const approach = clean(design?.approach);
-  const dims = Array.isArray(design?.dimensions)
-    ? design.dimensions.filter((d) => d && clean(d.content))
-    : [];
-  const constraints = clean(design?.constraints);
-  const feasibilityNotes = clean(design?.feasibilityNotes);
-  const keyItems = Array.isArray(design?.keyItems) ? design.keyItems.filter((k) => k && k.content) : [];
-  const openCount = keyItems.filter((k) => k.status === 'open').length;
-
+  // 「待聊」/「待澄清」或缺失的字段视为没有（许愿池炼的卡没有设计内容）
+  const clean = (v) =>
+    typeof v === 'string' && v.trim() && v.trim() !== '待聊' && v.trim() !== '待澄清' ? v : null;
   const stars = Math.min(5, Math.max(0, card.creativity || 0));
-  // 状态徽章：新芽 / 已确认·造物中（附 buildStatus 文案）/ 已实现
+  // 状态徽章：待确认 / 已确认·施工中（附 buildStatus 文案）/ 已实现
   const statusLabel =
     card.status === 'CONFIRMED' && card.buildStatus && card.buildStatus !== 'NONE'
       ? `已确认 · ${BUILD_STATUS_TEXT[card.buildStatus] || card.buildStatus}`
       : STATUS_LABELS[card.status] || card.status;
+
+  const isNewContract = Boolean(design && (design.wants || design.motivation || design.keyLog));
 
   return (
     <div className={`feature-card ${className}`}>
@@ -86,6 +80,142 @@ export default function FeatureCard({ card, badge, footer, onExport, className =
         {'☆'.repeat(5 - stars)}
       </div>
       {card.summary && <p className="fc-summary">{card.summary}</p>}
+      {isNewContract ? (
+        <BriefBody design={design} clean={clean} />
+      ) : (
+        <LegacyBody design={design} clean={clean} />
+      )}
+      {footer}
+    </div>
+  );
+}
+
+/** 新契约（需求简报移交件）正文：简报各节直出，开发线问题/分歧/留痕折叠 */
+function BriefBody({ design, clean }) {
+  const wants = Array.isArray(design?.wants) ? design.wants.filter((f) => clean(f)) : [];
+  const motivation = clean(design?.motivation);
+  const audience = clean(design?.audience);
+  const expectations = clean(design?.expectations);
+  const constraints = clean(design?.constraints);
+  const openItems = Array.isArray(design?.openItems) ? design.openItems.filter((o) => o && o.question) : [];
+  const disputes = Array.isArray(design?.disputes) ? design.disputes.filter((d) => d && d.target) : [];
+  const keyLog = Array.isArray(design?.keyLog) ? design.keyLog.filter((k) => k && k.content) : [];
+  const openCount = keyLog.filter((k) => k.status === 'open').length;
+
+  return (
+    <>
+      {(wants.length > 0 || motivation || audience || expectations || constraints) && (
+        <div className="fc-core">
+          {wants.length > 0 && (
+            <div className="fc-core-item">
+              <span className="fc-core-label">用户想要</span>
+              <ul className="fc-fn-list">
+                {wants.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {motivation && (
+            <div className="fc-core-item">
+              <span className="fc-core-label">背景与动机</span>
+              <p className="fc-core-text">{motivation}</p>
+            </div>
+          )}
+        </div>
+      )}
+      {(audience || expectations || constraints) && (
+        <dl className="fc-fields">
+          {audience && (
+            <div>
+              <dt>使用者与场景</dt>
+              <dd>{audience}</dd>
+            </div>
+          )}
+          {expectations && (
+            <div>
+              <dt>呈现与体验期望</dt>
+              <dd>{expectations}</dd>
+            </div>
+          )}
+          {constraints && (
+            <div>
+              <dt>硬性要求</dt>
+              <dd>{constraints}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+      {openItems.length > 0 && (
+        <details className="fc-scroll">
+          <summary>留给开发线的问题（{openItems.length}）</summary>
+          <ul className="fc-keyitems">
+            {openItems.map((o, i) => (
+              <li key={i} className="fc-keyitem">
+                <span className="ki-tag ki-q">待澄清</span>
+                <span className="fc-ki-body" title={o.why || ''}>
+                  {o.question}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {disputes.length > 0 && (
+        <details className="fc-scroll">
+          <summary>待定分歧（{disputes.length}）</summary>
+          <ul className="fc-keyitems">
+            {disputes.map((d, i) => (
+              <li key={i} className="fc-keyitem open">
+                <span className="ki-tag ki-ask">待表态</span>
+                <span className="fc-ki-body">
+                  {d.target}
+                  {d.alternative && <i className="fc-ki-status">替代方案：{d.alternative}</i>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {keyLog.length > 0 && (
+        <details className="fc-scroll">
+          <summary>关键留痕{openCount > 0 ? `（${openCount} 条待定）` : ''}</summary>
+          <ul className="fc-keyitems">
+            {keyLog.map((k, i) => (
+              <li key={i} className={`fc-keyitem${k.status === 'open' ? ' open' : ''}`}>
+                <span className={`ki-tag ki-${KEYITEM_TAG[k.type] || 'ask'}`}>{k.type || '条目'}</span>
+                <span className="fc-ki-body">
+                  {k.content}
+                  {k.status === 'open' ? (
+                    <i className="fc-ki-status">待定</i>
+                  ) : k.conclusion ? (
+                    <i className="fc-ki-status resolved">已定：{k.conclusion}</i>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
+  );
+}
+
+/** 旧契约（存量卡兼容）正文：功能清单/达成判据/实现思路直出，维度/边界/关键条目折叠 */
+function LegacyBody({ design, clean }) {
+  const functions = Array.isArray(design?.functions) ? design.functions.filter((f) => clean(f)) : [];
+  const effects = clean(design?.effects);
+  const approach = clean(design?.approach);
+  const dims = Array.isArray(design?.dimensions)
+    ? design.dimensions.filter((d) => d && clean(d.content))
+    : [];
+  const constraints = clean(design?.constraints);
+  const feasibilityNotes = clean(design?.feasibilityNotes);
+  const keyItems = Array.isArray(design?.keyItems) ? design.keyItems.filter((k) => k && k.content) : [];
+  const openCount = keyItems.filter((k) => k.status === 'open').length;
+
+  return (
+    <>
       {(functions.length > 0 || effects || approach) && (
         <div className="fc-core">
           {functions.length > 0 && (
@@ -161,7 +291,6 @@ export default function FeatureCard({ card, badge, footer, onExport, className =
           </ul>
         </details>
       )}
-      {footer}
-    </div>
+    </>
   );
 }

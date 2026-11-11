@@ -62,14 +62,14 @@ public class ForgeHeraldService {
 
     /** 三分类 prompt（flash 低延迟小任务，与路由 L2 同档同模式；失败兜底 answer，误分最坏多一轮引导不污染黑板） */
     private static final String CLASSIFY_PROMPT = """
-            你是工部传话官。工部正在营造一座道场，此前有一个问题正等客人回答，客人刚发来一条消息。
+            你是开发线传话官。开发线正在施工一个应用，此前有一个问题正等用户回答，用户刚发来一条消息。
             判断这条消息的意图，严格只输出 JSON（禁止 markdown 代码块、禁止解释文字）：
             {"intent":"answer"}
 
             intent 三选一：
             - answer：在回答/回应那个挂起问题（直接给答案、给选项内容或序号、「都行」「你定」这类表态都算）
             - demand：不是在答那个问题，而是提出了新需求、补充想法或吐槽
-            - chat：无关闲聊、寒暄，或在与营造无关地聊别的
+            - chat：无关闲聊、寒暄，或在与施工无关地聊别的
             """;
 
     private final ObjectProvider<ChatModel> routeModelProvider;
@@ -98,7 +98,7 @@ public class ForgeHeraldService {
         long startAt = System.currentTimeMillis();
         LlmUsage.set("forge.herald");
         try {
-            String input = "【挂起问题】\n" + question.question() + "\n\n【客人消息】\n" + message;
+            String input = "【挂起问题】\n" + question.question() + "\n\n【用户消息】\n" + message;
             String reply = model.chat(List.of(
                     SystemMessage.from(CLASSIFY_PROMPT),
                     UserMessage.from(input))).aiMessage().text();
@@ -187,16 +187,15 @@ public class ForgeHeraldService {
 
     // ---- 分身文案模板（零模型调用，低延迟稳定） ----
 
-    /** 开场：分身自报家门 + 引导（§5.1 裁剪版人设） */
+    /** 开工开场播报（notice 信封，开工事务内落库） */
     public String openingText(String cardTitle) {
-        return "（老朽合十）老朽的分身在此恭候。「" + cardTitle + "」道场已经开工营造，"
-                + "营造中若有要请客人定夺之处，老朽会在此处相询；"
-                + "客人想起什么新想法也尽管说，老朽记下，终审时一并参详。";
+        return "「" + cardTitle + "」已开工，开发线团队正在施工。"
+                + "需要你定夺的地方我会在这里提问；你有新想法也随时说，终审时会一并参考。";
     }
 
     /** 挂起问题转述：正文 + 选项行 + 默认值提示（analyst 的问题已要求口语化，此处原样转述不加戏） */
     public String questionText(PendingQuestion q) {
-        StringBuilder sb = new StringBuilder("营造之中有一处要请客人定夺：\n").append(q.question());
+        StringBuilder sb = new StringBuilder("施工中有一处需要你定夺：\n").append(q.question());
         if (q.options() != null && !q.options().isEmpty()) {
             sb.append('\n');
             for (int i = 0; i < q.options().size(); i++) {
@@ -204,46 +203,46 @@ public class ForgeHeraldService {
             }
         }
         if (q.defaultValue() != null && !q.defaultValue().isBlank()) {
-            sb.append("\n（客人若拿不定，老朽可先按「").append(q.defaultValue()).append("」来，终审时再改。）");
+            sb.append("\n（拿不定可先按「").append(q.defaultValue()).append("」来，终审时再改。）");
         }
         return sb.toString();
     }
 
-    /** 答题确认（方案 A 确认即关流）：resume 已在后台跑，新挂起问题以分身消息落库、前端轮询可见 */
+    /** 答题确认（方案 A 确认即关流）：resume 已在后台跑，新挂起问题以助理消息落库、前端轮询可见 */
     public String confirmText() {
-        return "好，老朽这就接着营造。匠人赶工时客人可先去忙别的，有新进展老朽会在此处说。";
+        return "好，这就继续施工。有新进展我会在这里同步，你可以先去忙别的。";
     }
 
     /** 新需求/吐槽：记 backlog 后引导拉回挂起问题（§5.2.1 原文口径） */
     public String redirectText() {
-        return "已记下，终审时一并参详。先把手里这个定了吧？";
+        return "已记下，终审时会一并参考。先把当前这个定了吧？";
     }
 
     /** 无关闲聊：礼貌挡回主线，引导用户而非被用户带偏（§5.2.1） */
     public String deflectText(String cardTitle) {
-        return "此处专司营造「" + cardTitle + "」道场，不便叙话；想找老朽本尊，请回主线见。";
+        return "这里专注施工「" + cardTitle + "」，不方便闲聊；想聊别的请回主对话。";
     }
 
     /** RUNNING 中插话：不打断执行中的岗（竞态噩梦），消息落库 + 记 backlog，当前岗跑完后统一参详 */
     public String busyText() {
-        return "营造正在进行中，客人这话老朽先记下了，这轮忙完再一并参详。";
+        return "正在施工中，你这条我先记下了，这轮忙完统一处理。";
     }
 
     /** 并发已答（CAS 被其他触发源拿走）：安抚不重复推进 */
     public String racingText() {
-        return "这条已经在继续营造了，客人稍待，有进展老朽会在此处说。";
+        return "这条已经在处理了，稍待，有进展我会在这里同步。";
     }
 
     /** 非等待态（REVIEW/BLOCKED/终态）收到消息：backlog + 对应状态说明 */
     public String statusText(String status, String note) {
         String extra = note == null || note.isBlank() ? "" : "：" + abbreviate(note, 80);
         return switch (status == null ? "" : status) {
-            case ForgeJobEntity.STATUS_REVIEW -> "营造已出稿，现在待终审定夺。客人这话先记下，终审时一并参详。";
-            case ForgeJobEntity.STATUS_BLOCKED -> "营造遇阻暂停" + extra + "。客人这话先记下，待工单重新推进时参详。";
-            case ForgeJobEntity.STATUS_DONE -> "这座道场已营造完毕、施工包已出稿。客人这话记下，留给二期参详。";
-            case ForgeJobEntity.STATUS_FAILED -> "营造中途出了岔子" + extra + "，可从看板重试。客人这话先记下。";
-            case ForgeJobEntity.STATUS_CANCELLED -> "这座道场的营造已取消。客人这话记下，留给往后的点子参详。";
-            default -> "工单当前状态：" + status + "。客人这话老朽先记下了。";
+            case ForgeJobEntity.STATUS_REVIEW -> "文档已出稿，现在待终审定夺。你这条先记下，终审时一并参考。";
+            case ForgeJobEntity.STATUS_BLOCKED -> "施工遇阻暂停" + extra + "。你这条先记下，待工单重新推进时参考。";
+            case ForgeJobEntity.STATUS_DONE -> "这个应用已施工完毕、文档已出稿。你这条记下，留给二期参考。";
+            case ForgeJobEntity.STATUS_FAILED -> "施工中途出了问题" + extra + "，可从看板重试。你这条先记下。";
+            case ForgeJobEntity.STATUS_CANCELLED -> "这个应用的施工已取消。你这条记下，留给后续想法参考。";
+            default -> "工单当前状态：" + status + "。你这条我先记下了。";
         };
     }
 

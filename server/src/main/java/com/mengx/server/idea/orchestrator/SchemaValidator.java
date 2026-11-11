@@ -15,8 +15,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class SchemaValidator {
 
-    /** 功能卡 JSON 必要字段（核心三要素 + 标题） */
-    private static final Set<String> CARD_REQUIRED = Set.of("title", "functions", "effects", "approach");
+    /** 功能卡 JSON 必要字段（标题 + 一句话定位 + 用户想要什么） */
+    private static final Set<String> CARD_REQUIRED = Set.of("title", "summary", "wants");
 
     /** 法考题 JSON 必要字段 */
     private static final Set<String> LAW_QUESTION_REQUIRED = Set.of("stem", "options", "answer");

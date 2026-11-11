@@ -71,11 +71,20 @@ public class IdeaService {
 
     // ---------- 会话 ----------
 
-    /** 新场开场白模板：仙君亮相——世间万物皆可问，共创点子炼功能卡、涨修为 */
+    /**
+     * 新场开场白模板（固定文案，零模型调用）：产品定位 + 现有能力清单——
+     * 功能介绍永远准确（模型发挥会漏会编）、零延迟、零 token 成本。
+     */
     private static final String OPENING_TEMPLATE =
-            "老朽百晓仙君，恭候「%s」多时。天地之间没有什么问不得的——天文地理、律法经义、人情世故，"
-                    + "世间万物，老朽都接得住。阁下若心里揣着点子，也尽管道来，"
-                    + "你我共创推演一番，把它炼成一张功能卡——好点子最养修为，你我皆更上一层楼。";
+            "你好，「%s」，我是「点石」的主理助理。这个产品有一个特别的属性：\n\n"
+                    + "**你在这里提出的想法，会被聊成需求、产出 PRD，最终长成本产品的新功能**——它在自我迭代。\n\n"
+                    + "当前已有的能力：\n"
+                    + "- **需求共创**：把一个模糊想法聊成清晰的需求简报，交给多角色开发线产出 PRD\n"
+                    + "- **法学助手**：法条检索、案例解答、法考刷题与主观题批改（输入框上方入口）\n"
+                    + "- **每日一签**：轻量每日运势（顶栏菜单）\n"
+                    + "- **开发线**：功能卡确认后自动开工，进度见顶栏铃铛；看板可查看全部想法\n"
+                    + "- **谈股论道**：股票与财报分析（开发中）\n\n"
+                    + "直接说你的想法或问题就行。";
 
     /** 开一场新访谈（"新开一场"）：随会话落开场白（assistant 行、host 通道），刷新/换设备不丢 */
     public IdeaSessionEntity createSession(Long userId, String nickname) {
@@ -87,7 +96,7 @@ public class IdeaService {
 
     /** 开场白文案（createSession 落库同款，供创建响应带回前端直接上屏） */
     public String openingGreeting(String nickname) {
-        String guest = (nickname == null || nickname.isBlank()) ? "阁下" : nickname;
+        String guest = (nickname == null || nickname.isBlank()) ? "朋友" : nickname;
         return OPENING_TEMPLATE.formatted(guest);
     }
 

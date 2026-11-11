@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
  * 工部审校官岗（方案 §6.3/§6.1）：岗链终岗，通读黑板全部段做只读校对（不写任何段）。
  * 两态裁决：REWRITE 定向打回（analyst/advisor/architect 三选一，≤2 轮硬上限由编排器执行）
  * 或 CONTINUE 交主理人终审（编排器转 REVIEW 状态）。
- * 打回纪律：只对方向性/施工性硬伤打回（整岗重跑成本高），小瑕疵不放行前修；审校不问客人。
+ * 打回纪律：只对方向性/施工性硬伤打回（整岗重跑成本高），小瑕疵不放行前修；审校不问用户。
  *
  * 角色分工：本类是工部岗位编排；LLM 契约在 {@link ReviewerAgent}。
  */
@@ -60,7 +60,7 @@ public class ReviewerRole implements ForgeAgent {
         }
         if ("WAIT".equals(instruction)) {
             // 审校是内部工序：WAIT 属异常输出，不静默放行也不死锁，BLOCKED 可从断点重试
-            return AgentResult.block("审校官输出异常指令（WAIT：审校不问客人），本次作废，可重试");
+            return AgentResult.block("审校官输出异常指令（WAIT：审校不问用户），本次作废，可重试");
         }
         if ("BLOCK".equals(instruction)) {
             return AgentResult.block(isBlank(reply.note())
@@ -80,14 +80,14 @@ public class ReviewerRole implements ForgeAgent {
     private String buildUserPrompt(ForgeContext ctx) {
         IdeaCardEntity card = ctx.card();
         StringBuilder sb = new StringBuilder();
-        sb.append("【道场卡】\n");
+        sb.append("【功能卡】\n");
         sb.append("标题：").append(card.getTitle()).append('\n');
         sb.append("一句话：").append(or(card.getSummary(), "")).append('\n');
         sb.append("\n【产品深化段】\n").append(json(ctx.board().getProduct())).append('\n');
         sb.append("\n【领域设计段】\n").append(json(ctx.board().getDomainDesign())).append('\n');
         sb.append("\n【工程施工段】\n").append(json(ctx.board().getEngineering())).append('\n');
         if (ctx.board().getOpenQuestions() != null && !ctx.board().getOpenQuestions().isEmpty()) {
-            sb.append("\n【待决问题清单】（仙官代拟的默认项，校对兜底处理）\n");
+            sb.append("\n【待决问题清单】（系统代拟的默认项，校对兜底处理）\n");
             ctx.board().getOpenQuestions().forEach(q -> sb.append("- ").append(q).append('\n'));
         }
         if (!isBlank(ctx.job().getErrorNote())) {

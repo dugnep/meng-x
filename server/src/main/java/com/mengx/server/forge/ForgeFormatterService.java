@@ -59,7 +59,7 @@ public class ForgeFormatterService {
                 return;
             }
             String title = cardRepository.findById(job.getCardId())
-                    .map(c -> c.getTitle()).orElse("新道场");
+                    .map(c -> c.getTitle()).orElse("新应用");
             ForgeBlackboard board = ForgeBlackboard.load(job);
             long startAt = System.currentTimeMillis();
             LlmUsage.set("forge.formatter");
@@ -79,8 +79,8 @@ public class ForgeFormatterService {
                     c.markBuild(ForgeJobEntity.STATUS_DONE, doc);
                     cardRepository.save(c);
                 });
-                herald.postReply(jobId, "「" + title + "」施工包已出稿，客人可从看板下载，"
-                        + "直接投喂给 AI 编程工具就能开工营造。");
+                herald.postReply(jobId, "「" + title + "」的施工文档已出稿，可在看板下载，"
+                        + "直接投喂给 AI 编程工具即可开工。");
                 return true;
             });
             if (Boolean.TRUE.equals(done)) {
@@ -95,7 +95,7 @@ public class ForgeFormatterService {
 
     /** 排版输入：道场名 + 终稿黑板 JSON 全文（排版只认黑板，信封外输入仅标题） */
     private String buildInput(String title, ForgeBlackboard board) {
-        return "【道场名】\n" + title + "\n\n【施工包 JSON 终稿】\n" + board.toJson();
+        return "【应用名】\n" + title + "\n\n【施工包 JSON 终稿】\n" + board.toJson();
     }
 
     /** 排版异常兜底：FAILED 带说明 + 卡片镜像（与编排器 fail 同模式；CAS 0 行说明已被自行转移，跳过） */

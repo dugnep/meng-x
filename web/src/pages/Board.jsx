@@ -203,7 +203,7 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
   return (
     <div className="board-page">
       <header className="board-header">
-        <span className="board-title">点子铺 · 功能卡看板</span>
+        <span className="board-title">点石 · 功能卡看板</span>
         <div className="board-header-actions">
           <span className="board-user">{user.nickname}</span>
           <button type="button" className="icon-btn" title="回首页聊" aria-label="回首页聊" onClick={onBack}>
@@ -250,13 +250,13 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
             <div className="toolbar-actions">
               <button
                 className="toolbar-btn wish-entry-btn"
-                title="把一句话愿望投进池子，精灵替你炼成功能卡"
+                title="写一句话愿望，自动提炼成功能卡"
                 onClick={() => setWish({ phase: 'input', text: '' })}
               >
                 <span className="wish-star" aria-hidden="true">✦</span>
                 许愿池
               </button>
-              <button className="toolbar-btn" onClick={() => download('', '点子铺-功能卡清单.md')}>
+              <button className="toolbar-btn" onClick={() => download('', '点石-功能卡清单.md')}>
                 导出全部
               </button>
             </div>
@@ -269,12 +269,12 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
       {view === 'board' && (
         <Masonry
           items={cards}
-          empty={<p className="board-empty">还没有功能卡。回聊天页和百晓通聊聊，点子就长出来了～</p>}
+          empty={<p className="board-empty">还没有功能卡。回聊天页和主理助理聊聊，把想法聊成功能卡～</p>}
           renderItem={(c) => (
             <FeatureCard
               key={c.id}
               card={c}
-              onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
+              onExport={() => download(`cardId=${c.id}`, `点石-${c.title}.md`)}
               footer={
                 <div className="fc-footer">
                   <span className="fc-source">
@@ -331,9 +331,9 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
               {wallCards === null && <p className="board-empty">推开大门看看…</p>}
               {wallCards !== null && wallCards.length === 0 && (
                 <p className="board-empty">
-                  铺子还在修行中——第一件法宝，正等着从一次闲聊里长出来。
+                  看板还是空的——第一张功能卡，正等着从一次聊天里长出来。
                   <br />
-                  和百晓通聊聊，说不定它就是你的点子。
+                  和主理助理聊聊，说不定它就是你的下一个功能。
                 </p>
               )}
             </>
@@ -342,7 +342,7 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
             <FeatureCard
               key={c.id}
               card={c}
-              onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
+              onExport={() => download(`cardId=${c.id}`, `点石-${c.title}.md`)}
               footer={
                 <div className="fc-footer">
                   <span className="fc-source wall-source">
@@ -363,7 +363,7 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
               {mineCards === null && <p className="board-empty">翻你的点子簿…</p>}
               {mineCards !== null && mineCards.length === 0 && (
                 <p className="board-empty">
-                  你还没有留下点子。回聊天页和百晓通聊聊，第一个点子就从这里长出来～
+                  你还没有留下想法。回聊天页和主理助理聊聊，第一个想法就从这里开始～
                 </p>
               )}
             </>
@@ -372,7 +372,7 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
             <FeatureCard
               key={c.id}
               card={c}
-              onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
+              onExport={() => download(`cardId=${c.id}`, `点石-${c.title}.md`)}
               footer={
                 <div className="fc-footer">
                   <span className="fc-source">
@@ -394,7 +394,7 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
             <>
               {rankCards === null && <p className="board-empty">揭示榜单中…</p>}
               {rankCards !== null && rankCards.length === 0 && (
-                <p className="board-empty">还没有点子收到香火。去给你喜欢的点子添一炷香，把它顶上榜～</p>
+                <p className="board-empty">还没有想法收到赞赏。去给你喜欢的想法点个赞，把它顶上榜～</p>
               )}
             </>
           }
@@ -402,7 +402,7 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
             <FeatureCard
               key={c.id}
               card={c}
-              onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
+              onExport={() => download(`cardId=${c.id}`, `点石-${c.title}.md`)}
               badge={<span className={`rank-no rank-${i + 1}`}>第{i + 1}名</span>}
               footer={
                 <div className="fc-footer">
@@ -432,7 +432,7 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
               <>
                 <h3>许愿池</h3>
                 <p className="wish-tip">
-                  把一句话愿望投进池子，精灵会替你把它炼成一张功能卡，再回聊天页继续打磨。
+                  写一句话愿望，自动提炼成一张功能卡，再回聊天页继续打磨。
                 </p>
                 <div className="form-row">
                   <textarea
@@ -458,9 +458,9 @@ export default function Board({ user, onBack, onOpenForge, onLogout }) {
             )}
             {wish.phase === 'done' && (
               <>
-                <h3>愿望炼成啦</h3>
+                <h3>愿望成卡啦</h3>
                 <p className="wish-done">
-                  「{wish.card.title}」已收进点子铺（{wish.card.summary}）。
+                  「{wish.card.title}」已收进看板（{wish.card.summary}）。
                   回聊天页点「历史」找到这场愿望，可以继续打磨它～
                 </p>
                 <div className="modal-actions">

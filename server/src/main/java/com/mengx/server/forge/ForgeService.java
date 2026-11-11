@@ -36,7 +36,7 @@ public class ForgeService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     /** 无营造图快照的兜底信封（缺设计沉淀）：分析师按卡片标题与一句话深化 */
-    private static final String EMPTY_SNAPSHOT = "{\"note\":\"无营造图快照，请以功能卡标题与一句话说明为基准深化\"}";
+    private static final String EMPTY_SNAPSHOT = "{\"note\":\"无需求简报快照，请以功能卡标题与一句话说明为基准深化\"}";
 
     /** 终审打回合法目标岗（advisor 为槽位名，执行时经注册表重新选型） */
     private static final Set<String> REJECT_TARGETS = Set.of("analyst", "advisor", "architect", "reviewer");
@@ -275,7 +275,7 @@ public class ForgeService {
             }
             mirrorBuild(job.getCardId(), ForgeJobEntity.STATUS_RUNNING, null);
             herald.postReply(job.getId(), "主理人把稿子打回给「" + STAGE_LABELS.get(target)
-                    + "」重造：" + req.reason().trim() + "。工部已重新开工，有新进展老朽再禀报。");
+                    + "」重造：" + req.reason().trim() + "。开发线已重新开工，有新进展会在这里同步。");
             return true;
         });
         if (!Boolean.TRUE.equals(ok)) {
@@ -283,7 +283,7 @@ public class ForgeService {
         }
         executor.submitStage(job.getId(), () -> orchestrator.runStage(job));
         log.info("工单 {} 终审打回至 {} 岗（原因：{}）", job.getId(), target, abbreviate(req.reason()));
-        return new ReviewResult(200, "已打回给「" + STAGE_LABELS.get(target) + "」重新营造");
+        return new ReviewResult(200, "已打回给「" + STAGE_LABELS.get(target) + "」重新施工");
     }
 
     /** 搁置谢绝：REVIEW → CANCELLED，工单随卡归档（一卡一单约束下不可再开工，v1 可接受） */
@@ -294,7 +294,7 @@ public class ForgeService {
                 return false;
             }
             mirrorBuild(job.getCardId(), ForgeJobEntity.STATUS_CANCELLED, null);
-            herald.postReply(job.getId(), "主理人搁置了这座道场的营造，待往后的机缘再议。");
+            herald.postReply(job.getId(), "主理人搁置了这个应用的施工，以后可随时重启。");
             return true;
         });
         if (!Boolean.TRUE.equals(ok)) {

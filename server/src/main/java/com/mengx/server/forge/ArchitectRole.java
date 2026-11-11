@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  * 工部架构师岗（方案 §6.3）：读产品段 + 领域设计段，写工程施工段（engineering 自由结构，§6.5）。
  * 施工必须贴合架构手册（全局约束唯一真源，「必须复用不得另建」）；输出到架构级——
  * 模块划分/表结构/接口草案，不写代码级细节（代码由 AI 编程工具按施工包生成）。
- * 三不原则（§5.2）：技术决策一律自决、不问客人——本岗禁止 WAIT。
+ * 三不原则（§5.2）：技术决策一律自决、不问用户——本岗禁止 WAIT。
  *
  * 角色分工：本类是工部岗位编排；LLM 契约在 {@link ArchitectAgent}（架构手册经 @V 注入）。
  */
@@ -57,8 +57,8 @@ public class ArchitectRole implements ForgeAgent {
         String instruction = reply.instruction() == null
                 ? "" : reply.instruction().trim().toUpperCase();
         if ("WAIT".equals(instruction)) {
-            // 三不原则：架构师不问客人。段已产出说明只是想问——忽略问题按完成推进；没段则无法施工
-            return AgentResult.block("架构师试图向客人提问（技术决策应自决），本次输出作废，请重跑");
+            // 三不原则：架构师不问用户。段已产出说明只是想问——忽略问题按完成推进；没段则无法施工
+            return AgentResult.block("架构师试图向用户提问（技术决策应自决），本次输出作废，请重跑");
         }
         if ("BLOCK".equals(instruction)) {
             return AgentResult.block(isBlank(reply.note())
@@ -71,7 +71,7 @@ public class ArchitectRole implements ForgeAgent {
     private String buildUserPrompt(ForgeContext ctx) {
         IdeaCardEntity card = ctx.card();
         StringBuilder sb = new StringBuilder();
-        sb.append("【道场卡】\n");
+        sb.append("【功能卡】\n");
         sb.append("标题：").append(card.getTitle()).append('\n');
         sb.append("一句话：").append(or(card.getSummary())).append('\n');
         sb.append("\n【产品深化段】（需求分析师产出）\n")
@@ -79,7 +79,7 @@ public class ArchitectRole implements ForgeAgent {
         sb.append("\n【领域设计段】（领域顾问产出）\n")
                 .append(json(ctx.board().getDomainDesign())).append('\n');
         if (ctx.board().getOpenQuestions() != null && !ctx.board().getOpenQuestions().isEmpty()) {
-            sb.append("\n【待决问题清单】（部分为仙官代拟的默认项，请给出兜底处理）\n");
+            sb.append("\n【待决问题清单】（部分为系统代拟的默认项，请给出兜底处理）\n");
             ctx.board().getOpenQuestions().forEach(q -> sb.append("- ").append(q).append('\n'));
         }
         if (ctx.board().getEngineering() != null) {

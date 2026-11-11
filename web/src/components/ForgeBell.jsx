@@ -3,7 +3,7 @@ import { api } from '../api';
 
 /** 工单状态 → 中文标签 / 徽章样式类（与 ForgeChat 共用口径） */
 const STATUS_LABELS = {
-  RUNNING: '营造中',
+  RUNNING: '施工中',
   WAITING_USER: '等定夺',
   BLOCKED: '遇阻',
   FAILED: '出岔子',
@@ -74,8 +74,8 @@ export default function ForgeBell({ onOpenJob }) {
       <button
         type="button"
         className={`icon-btn forge-bell-btn${open ? ' open' : ''}`}
-        title="造物线工单"
-        aria-label="造物线工单"
+        title="开发线工单"
+        aria-label="开发线工单"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
@@ -90,12 +90,12 @@ export default function ForgeBell({ onOpenJob }) {
       </button>
       {open && (
         <div className="forge-panel">
-          <p className="forge-panel-title">造物线 · 在制工单</p>
+          <p className="forge-panel-title">开发线 · 在制工单</p>
           {jobs === null ? (
             <p className="forge-panel-empty">翻查工单簿…</p>
           ) : jobs.length === 0 ? (
             <p className="forge-panel-empty">
-              还没有开工的道场。功能卡「确认并开工」后，造物线工单会自动建好。
+              还没有开工的任务。功能卡「确认并开工」后，开发线工单会自动建好。
             </p>
           ) : (
             jobs.map((j) => (

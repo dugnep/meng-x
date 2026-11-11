@@ -11,7 +11,7 @@ const STAGES = [
 
 /** 工单状态 → 中文标签 + 徽章样式类 */
 const STATUS_META = {
-  RUNNING: { label: '营造中', cls: 'st-running' },
+  RUNNING: { label: '施工中', cls: 'st-running' },
   WAITING_USER: { label: '等定夺', cls: 'st-waiting' },
   BLOCKED: { label: '遇阻', cls: 'st-blocked' },
   FAILED: { label: '出岔子', cls: 'st-failed' },
@@ -147,7 +147,7 @@ export default function ForgeChat({ jobId, onBack, onLogout }) {
   /** 终审动作（§5.5 主理人介入：结构化操作不进对话）：approve/reject/cancel */
   async function act(action, target, reason) {
     if (acting) return;
-    if (action === 'cancel' && !window.confirm('搁置谢绝后这座道场的营造将终止，确定？')) return;
+    if (action === 'cancel' && !window.confirm('搁置后这个应用的施工将终止，确定？')) return;
     setActing(true);
     try {
       await reviewForgeJob(jobId, { action, target, reason });
@@ -187,7 +187,7 @@ export default function ForgeChat({ jobId, onBack, onLogout }) {
     const blob = await resp.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `施工包-${job.cardTitle || '道场'}.md`;
+    a.download = `施工文档-${job.cardTitle || '应用'}.md`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -198,7 +198,7 @@ export default function ForgeChat({ jobId, onBack, onLogout }) {
     const answerable = !sending && pendingQ && pendingQ.id === env.questionId;
     return (
       <div key={i} className="bubble assistant">
-        <span className="forge-tag">百晓仙君 · 分身</span>
+        <span className="forge-tag">点石 · 开发线</span>
         {env.rendered}
         {env.type === 'question' && env.options.length > 0 && (
           <div className="forge-options">
@@ -229,7 +229,7 @@ export default function ForgeChat({ jobId, onBack, onLogout }) {
             <path d="M5 9.5V21h5v-6h4v6h5V9.5" />
           </svg>
         </button>
-        <span className="forge-title">{job?.cardTitle || '造物线'}</span>
+        <span className="forge-title">{job?.cardTitle || '开发线'}</span>
         {meta && <span className={`forge-badge ${meta.cls}`}>{meta.label}</span>}
         {job && <span className="forge-ver">设计稿 v{job.designVersion || 1}</span>}
         <button className="logout-btn" onClick={onLogout}>
@@ -332,7 +332,7 @@ export default function ForgeChat({ jobId, onBack, onLogout }) {
           )}
           {reply !== null && (
             <div className="bubble assistant">
-              <span className="forge-tag">百晓仙君 · 分身</span>
+              <span className="forge-tag">点石 · 开发线</span>
               {reply || (sending ? '分身传话中…' : '')}
             </div>
           )}

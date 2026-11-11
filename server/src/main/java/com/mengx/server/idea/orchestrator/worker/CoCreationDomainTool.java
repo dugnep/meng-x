@@ -11,11 +11,12 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.FluxSink;
 
 /**
- * 共创领域工具：接管整轮，推演快照 + 领域顾问流式访谈直达用户，
- * 定稿后功能卡异步装配——全部内聚 CoCreationService，不经 Host 二次包装。
+ * 共创领域工具：接管整轮，推演简报 + 转述流式访谈直达用户，
+ * 移交确认后功能卡异步装配——全部内聚 CoCreationService，不经 Host 二次包装。
  * 许可制入口（availableFor 状态硬控 + 工具描述双防线）：冷启动不可见——机会识别归
- * 观察器旁路提案、用户经邀请卡许可后才可进入；许可后首轮及访谈热窗内可见，
- * 热窗内由 ChatOrchestrator.routeHint 注入指令化路由保障延续（V2）。
+ * 观察器旁路提案、用户经邀请卡许可后才可进入；许可后首轮及访谈热窗内可见。
+ * 访谈热窗内的强制派发（V3）由编排器直接调 CoCreationService（不再依赖 Host FC），
+ * 本工具保留为非强制场景（如未消化提案许可后 Host 自主调用）的回退路径。
  */
 @Component
 public class CoCreationDomainTool implements DomainTool {
